@@ -16,6 +16,7 @@ import os
 import sys
 import shutil
 import sqlite3
+import time
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -25,7 +26,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(os.path.join(project_root, "src"))
 
-from ace_rm.ace_framework import build_ace_agent, ACE_Memory, MODEL_NAME, BASE_URL
+from ace_rm.ace_framework import build_ace_agent, ACE_Memory, MODEL_NAME, BASE_URL, BackgroundWorker
 
 # Load environment variables
 load_dotenv()
@@ -57,6 +58,10 @@ def run_test():
     )
     
     ace_app = build_ace_agent(llm, memory)
+
+    # Start Background Worker for Async Reflection
+    worker = BackgroundWorker(memory, llm)
+    worker.start()
     
     # Step 1: Structural Learning (Storage)
     # ------------------------------------
@@ -81,8 +86,11 @@ def run_test():
         print(f"\n[Reflector] Should Store: {final_state_1.get('should_store')}")
         if final_state_1.get('should_store'):
             print(f"[Reflector] Lesson Learned (First 150 chars):\n{final_state_1.get('lesson_learned')[:150]}...")
+            print("\n[Test] Waiting 5 seconds for background worker to process...")
+            time.sleep(5) # Allow worker to process
     except Exception as e:
         print(f"ERROR in Step 1: {e}")
+        worker.stop()
         return
 
     # Step 2: Transfer Learning (Retrieval & Application)
@@ -116,6 +124,8 @@ def run_test():
         
     except Exception as e:
         print(f"ERROR in Step 2: {e}")
+    finally:
+        worker.stop()
 
     print("\n--- Test Completed ---")
 

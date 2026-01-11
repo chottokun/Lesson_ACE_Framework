@@ -4,6 +4,7 @@ import json
 import numpy as np
 import faiss
 import time
+import threading
 from typing import List, TypedDict, Optional, Annotated, Sequence, Union, Dict, Any
 from typing_extensions import NotRequired
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -64,6 +65,9 @@ class ACE_Memory:
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
+            # Enable WAL mode for concurrency
+            conn.execute("PRAGMA journal_mode=WAL;")
+            
             # Main table with metadata
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS documents (
@@ -80,6 +84,20 @@ class ACE_Memory:
             conn.execute("CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN INSERT INTO documents_fts(rowid, content, entities, problem_class) VALUES (new.id, new.content, new.entities, new.problem_class); END;")
             conn.execute("CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN INSERT INTO documents_fts(documents_fts, rowid, content, entities, problem_class) VALUES('delete', old.id, old.content, old.entities, old.problem_class); END;")
             conn.execute("CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN INSERT INTO documents_fts(documents_fts, rowid, content, entities, problem_class) VALUES('delete', old.id, old.content, old.entities, old.problem_class); INSERT INTO documents_fts(rowid, content, entities, problem_class) VALUES (new.id, new.content, new.entities, new.problem_class); END;")
+
+            # Persistent Task Queue for Background Worker
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS task_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_input TEXT,
+                    agent_output TEXT,
+                    status TEXT DEFAULT 'pending', -- pending, processing, done, failed
+                    retries INTEGER DEFAULT 0,
+                    error_msg TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
     def _load_or_build_index(self):
         if os.path.exists(self.index_path):
@@ -159,6 +177,117 @@ class ACE_Memory:
             cursor = conn.cursor()
             cursor.execute("SELECT id, content, entities, problem_class, timestamp FROM documents ORDER BY id DESC")
             return [dict(row) for row in cursor.fetchall()]
+
+    # --- Queue Operations ---
+    def enqueue_task(self, user_input: str, agent_output: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO task_queue (user_input, agent_output) VALUES (?, ?)",
+                (user_input, agent_output)
+            )
+
+    def fetch_pending_task(self) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # Fetch one pending task (FIFO)
+            cursor.execute("SELECT * FROM task_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    def mark_task_processing(self, task_id: int):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE task_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (task_id,))
+
+    def mark_task_complete(self, task_id: int):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE task_queue SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (task_id,))
+    
+    def mark_task_failed(self, task_id: int, error_msg: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE task_queue SET status = 'failed', error_msg = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (error_msg, task_id))
+
+# --- Background Worker ---
+class BackgroundWorker(threading.Thread):
+    def __init__(self, memory: ACE_Memory, llm: ChatOpenAI, interval: float = 1.0):
+        super().__init__(daemon=True) # Daemon thread exits when main program exits
+        self.memory = memory
+        self.llm = llm
+        self.interval = interval
+        self.running = True
+
+    def run(self):
+        print("[BackgroundWorker] Started.", flush=True)
+        while self.running:
+            try:
+                task = self.memory.fetch_pending_task()
+                if task:
+                    self.process_task(task)
+                else:
+                    time.sleep(self.interval)
+            except Exception as e:
+                print(f"[BackgroundWorker] Loop Error: {e}", flush=True)
+                time.sleep(5.0) # Backoff on error
+
+    def stop(self):
+        self.running = False
+
+    def process_task(self, task: Dict[str, Any]):
+        task_id = task['id']
+        print(f"[BackgroundWorker] Processing Task {task_id}...", flush=True)
+        self.memory.mark_task_processing(task_id)
+
+        user_input = task['user_input']
+        agent_output = task['agent_output']
+
+        prompt = f"""
+        Analyze this interaction. Extract Structural Knowledge (MFR) and General Principles.
+        
+        1. **Specific Analysis**: If a problem is presented, define:
+           - Entities, State Variables, Actions, Constraints.
+           - Summary of the solution.
+
+        2. **Abstraction & Generalization**:
+           - Abstract the specific details into a general pattern or rule.
+           - Identify the underlying problem class (e.g., "Constraint Satisfaction", "Resource Allocation").
+           - Define a general strategy derived from this instance.
+        
+        User: {user_input}
+        AI: {agent_output}
+        
+        Output JSON only:
+        {{
+            "analysis": "**Specific Model**:\\n[Details...]\\n\\n**Generalization**:\\n[Details...]",
+            "entities": ["list", "of", "key", "entities"],
+            "problem_class": "Identified Problem Class",
+            "should_store": true/false
+        }}
+        """
+        
+        try:
+            res = call_llm_with_retry(self.llm, [HumanMessage(content=prompt)]).content.strip()
+            # Basic cleanup
+            if "```json" in res: res = res.split("```json")[1].split("```")[0]
+            elif "```" in res: res = res.split("```")[1].split("```")[0]
+            
+            data = json.loads(res)
+            
+            if data.get('should_store', False):
+                print(f"[BackgroundWorker] Storing analysis for Task {task_id}", flush=True)
+                self.memory.add(
+                    content=data.get('analysis', ''),
+                    entities=data.get('entities', []),
+                    problem_class=data.get('problem_class', '')
+                )
+            
+            self.memory.mark_task_complete(task_id)
+            print(f"[BackgroundWorker] Task {task_id} Completed.", flush=True)
+
+        except Exception as e:
+            print(f"[BackgroundWorker] Task {task_id} Failed: {e}", flush=True)
+            self.memory.mark_task_failed(task_id, str(e))
 
 
 # --- 4. ACE Agent Nodes ---
@@ -261,7 +390,7 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory):
             return {"messages": messages + [AIMessage(content=f"Error in Agent: {e}")]}
 
     def reflector_node(state: AgentState):
-        """Extracts lessons and stores them in memory."""
+        """Queues the interaction for background analysis (Reflector)."""
         messages = state['messages']
         # Extract last Human and AI interaction
         human_msgs = [m for m in messages if isinstance(m, HumanMessage)]
@@ -273,57 +402,17 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory):
         last_human = human_msgs[-1]
         last_ai = ai_msgs[-1]
 
-        prompt = f"""
-        Analyze this interaction. Extract Structural Knowledge (MFR) and General Principles.
-        
-        1. **Specific Analysis**: If a problem is presented, define:
-           - Entities, State Variables, Actions, Constraints.
-           - Summary of the solution.
-
-        2. **Abstraction & Generalization**:
-           - Abstract the specific details into a general pattern or rule.
-           - Identify the underlying problem class (e.g., "Constraint Satisfaction", "Resource Allocation").
-           - Define a general strategy derived from this instance.
-        
-        User: {last_human.content}
-        AI: {last_ai.content}
-        
-        Output JSON only:
-        {{
-            "analysis": "**Specific Model**:\\n[Details...]\\n\\n**Generalization**:\\n[Details...]",
-            "entities": ["list", "of", "key", "entities"],
-            "problem_class": "Identified Problem Class",
-            "should_store": true/false
-        }}
-        """
-        
+        # Enqueue for background processing
         try:
-            res = call_llm_with_retry(llm, [HumanMessage(content=prompt)]).content.strip()
-            print(f"[Reflector] Raw Response: {res}", flush=True)
-
-            if "```json" in res: res = res.split("```json")[1].split("```")[0]
-            elif "```" in res: res = res.split("```")[1].split("```")[0]
-            
-            data = json.loads(res)
-            
-            if data.get('should_store', False):
-                print(f"[Reflector] Storing analysis: {data.get('analysis')[:50]}...", flush=True)
-                memory.add(
-                    content=data.get('analysis', ''),
-                    entities=data.get('entities', []),
-                    problem_class=data.get('problem_class', '')
-                )
-                return {
-                    "lesson_learned": data.get('analysis', '')[:100] + "...",
-                    "should_store": True
-                }
-            else:
-                print("[Reflector] should_store is False.", flush=True)
-            return {"should_store": False, "lesson_learned": "No significant lesson."}
-
+            print(f"[Reflector] Enqueueing interaction for background processing...", flush=True)
+            memory.enqueue_task(last_human.content, last_ai.content)
+            return {
+                "lesson_learned": "Analysis queued in background.",
+                "should_store": True # Indicates the process was initiated
+            }
         except Exception as e:
-            print(f"[Reflector] Error: {e}", flush=True)
-            return {"should_store": False, "lesson_learned": "Error in Reflection."}
+            print(f"[Reflector] Error enqueueing task: {e}", flush=True)
+            return {"should_store": False, "lesson_learned": "Error enqueueing reflection."}
 
     # --- Graph Definition ---
     workflow = StateGraph(AgentState)

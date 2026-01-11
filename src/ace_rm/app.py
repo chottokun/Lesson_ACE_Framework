@@ -2,7 +2,7 @@ import gradio as gr
 import pandas as pd
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from ace_rm.ace_framework import build_ace_agent, ACE_Memory, AgentState, MODEL_NAME, BASE_URL
+from ace_rm.ace_framework import build_ace_agent, ACE_Memory, AgentState, MODEL_NAME, BASE_URL, BackgroundWorker
 from langchain_openai import ChatOpenAI
 import os
 
@@ -18,6 +18,10 @@ llm = ChatOpenAI(
     temperature=0
 )
 ace_app = build_ace_agent(llm, memory)
+
+# Start Background Worker
+worker = BackgroundWorker(memory, llm)
+worker.start()
 
 def process_chat(user_message, history):
     """

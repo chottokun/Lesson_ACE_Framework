@@ -8,7 +8,7 @@ An LLM agent framework designed to demonstrate persistent memory, structural lea
 
 ## 🧠 Core Architecture
 
-The ACE Framework operates on a cognitive cycle composed of four key components:
+The ACE Framework operates on a cognitive cycle composed of five key components:
 
 1.  **Curator (Retrieval & Context)**
     *   **Function**: Analyzes user intent and queries the long-term memory.
@@ -18,13 +18,18 @@ The ACE Framework operates on a cognitive cycle composed of four key components:
     *   **Function**: The core LLM that generates responses or executes tools.
     *   **Context-Aware**: Utilizes the context provided by the Curator to ground its answers in established knowledge or past lessons.
 
-3.  **Reflector (Learning & Storage)**
-    *   **Function**: Runs *after* the agent's response to analyze the interaction.
-    *   **Structural Learning (MFR)**: Deconstructs the conversation into a **Specific Model** (Entities, Variables, Actions) and a **Generalization** (Abstract Strategy).
-    *   **Memory**: If a valuable lesson is identified, it is stored in the persistent memory (SQLite + FAISS).
+3.  **Reflector (Queuing & Hand-off)**
+    *   **Function**: Runs immediately after the agent's response.
+    *   **Action**: Instead of blocking the user for analysis, it **queues** the interaction into a persistent task queue, ensuring instant feedback to the user.
 
-4.  **Long-Term Memory**
+4.  **Background Worker (Async Analysis)**
+    *   **Function**: A dedicated thread that continuously processes the task queue.
+    *   **Structural Learning (MFR)**: Performs the heavy lifting of deconstructing the conversation into a **Specific Model** and **Generalization**.
+    *   **Benefits**: Achieves **High Responsiveness** (UI doesn't freeze) and **Zero Data Loss** (tasks are persisted in DB until successfully processed).
+
+5.  **Long-Term Memory**
     *   **Hybrid Storage**: Combines **SQLite** for structured metadata/text and **FAISS** for vector embedding search.
+    *   **Task Queue**: Uses a persistent SQLite table to manage background jobs, ensuring no insights are lost even across restarts.
     *   **Persistence**: Knowledge survives application restarts, allowing the agent to "grow" over time.
 
 ## 🚀 Setup & Installation
