@@ -38,36 +38,37 @@ The ACE Framework operates on a cognitive cycle composed of five key components:
 
 ```mermaid
 graph TD
-    subgraph "User Interface (app.py)"
-        User[👤 ユーザー] -->|1. メッセージ入力| Gradio[🌐 Gradio UI]
+    %% サブグラフ定義の修正: subgraph ID ["表示名"] の形式に変更
+    subgraph UI ["User Interface (app.py)"]
+        User["👤 ユーザー"] -->|"1. メッセージ入力"| Gradio["🌐 Gradio UI"]
     end
 
-    subgraph "ACE Agent - 同期処理 (ace_framework.py)"
-        Gradio -->|2. ace_app.invoke() 呼び出し| Curator
-        Curator("🧠 Curator <br> 意図分析・文脈検索") -->|4. 関連情報を検索| Memory
-        Memory -->|5. 検索結果を返す| Curator
-        Curator -->|6. 文脈を注入| Agent
-        Agent("🤖 Agent <br> 応答生成") -->|7. 対話内容を渡す| Reflector
-        Reflector("📝 Reflector <br> 対話をキューに追加") -->|8. タスクをキューに保存| TaskQueue
+    subgraph ACE ["ACE Agent - 同期処理 (ace_framework.py)"]
+        Gradio -->|"2. ace_app.invoke() 呼び出し"| Curator
+        Curator["🧠 Curator <br> 意図分析・文脈検索"] -->|"4. 関連情報を検索"| Memory
+        Memory -->|"5. 検索結果を返す"| Curator
+        Curator -->|"6. 文脈を注入"| Agent
+        Agent["🤖 Agent <br> 応答生成"] -->|"7. 対話内容を渡す"| Reflector
+        Reflector["📝 Reflector <br> 対話をキューに追加"] -->|"8. タスクをキューに保存"| TaskQueue
     end
 
-    subgraph "Long-Term Memory (ace_framework.py)"
+    subgraph LTM ["Long-Term Memory (ace_framework.py)"]
         Memory["📚 長期記憶 <br> (SQLite + FAISS)"]
         TaskQueue["📦 タスクキュー <br> (SQLite)"]
     end
 
-    subgraph "Background Learning - 非同期処理 (ace_framework.py)"
-        BG_Worker("⚙️ Background Worker <br> 定期的にキューを監視") -->|11. 未処理タスクを取得| TaskQueue
-        TaskQueue -->|12. タスクを渡す| BG_Worker
-        BG_Worker -->|13. 対話を分析・一般化 (LLM)| BG_Worker
-        BG_Worker -->|14. 学習した知識を保存| Memory
+    subgraph BG ["Background Learning - 非同期処理 (ace_framework.py)"]
+        BG_Worker["⚙️ Background Worker <br> 定期的にキューを監視"] -->|"11. 未処理タスクを取得"| TaskQueue
+        TaskQueue -->|"12. タスクを渡す"| BG_Worker
+        BG_Worker -->|"13. 対話を分析・一般化 (LLM)"| BG_Worker
+        BG_Worker -->|"14. 学習した知識を保存"| Memory
     end
 
     %% Final Output to User
-    Reflector -->|9. 応答を返す| Gradio
-    Gradio -->|10. 応答を表示| User
+    Reflector -->|"9. 応答を返す"| Gradio
+    Gradio -->|"10. 応答を表示"| User
 
-    %% Style definitions for clarity
+    %% Style definitions
     style User fill:#c9f,stroke:#333,stroke-width:2px
     style Gradio fill:#ccf,stroke:#333,stroke-width:2px
     style BG_Worker fill:#f96,stroke:#333,stroke-width:2px
