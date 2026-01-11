@@ -216,7 +216,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 # DB
-ace_memory.*
 *.db-shm
 *.db-wal
+*.db
+*.faiss
+
 
