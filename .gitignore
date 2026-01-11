@@ -217,4 +217,6 @@ __marimo__/
 
 # DB
 ace_memory.*
+*.db-shm
+*.db-wal
 
