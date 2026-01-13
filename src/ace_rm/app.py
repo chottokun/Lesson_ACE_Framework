@@ -133,7 +133,7 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
     
     with gr.Row():
         with gr.Column(scale=3):
-            chatbot = gr.Chatbot(height=600, label="Conversation", bubble_full_width=False)
+            chatbot = gr.Chatbot(height=600, label="Conversation")
             with gr.Row():
                 msg = gr.Textbox(scale=4, placeholder="Type a message...", show_label=False)
                 submit_btn = gr.Button("Send", scale=1, variant="primary")
