@@ -22,10 +22,10 @@ The ACE Framework operates on a cognitive cycle composed of five key components:
     *   **Function**: Runs immediately after the agent's response.
     *   **Action**: Instead of blocking the user for analysis, it **queues** the interaction into a persistent task queue, ensuring instant feedback to the user.
 
-4.  **Background Worker (Async Analysis)**
     *   **Function**: A dedicated thread that continuously processes the task queue.
-    *   **Structural Learning (MFR)**: Performs the heavy lifting of deconstructing the conversation into a **Specific Model** and **Generalization**.
-    *   **Benefits**: Achieves **High Responsiveness** (UI doesn't freeze) and **Zero Data Loss** (tasks are persisted in DB until successfully processed).
+    *   **Structural Learning (MFR)**: Deconstructs the conversation into a **Specific Model** and **Generalization**.
+    *   **Intelligent Synthesis**: Uses an **LLM-based Synthesizer** to compare new insights with existing memory. It decides whether to **UPDATE** (merge with existing), **KEEP** (discard as redundant), or add as **NEW**, ensuring a high-quality, self-organizing knowledge base.
+    *   **Benefits**: Achieves **High Responsiveness** (UI doesn't freeze) and **Zero Data Loss** (tasks are persisted in DB).
 
 5.  **Long-Term Memory**
     *   **Hybrid Storage**: Combines **SQLite** for structured metadata/text and **FAISS** for vector embedding search.
@@ -153,9 +153,14 @@ SAKURA_API_KEY=your_api_key_here
 
 # Optional: Long-Term Memory (LTM) Mode
 # Controls how the agent's memory is managed in a multi-user environment.
-# - "isolated" (Default): Each user session gets a private, independent memory. This is recommended for most use cases to ensure data privacy.
-# - "shared": All users interact with a single, global memory. The agent learns collectively from all interactions.
-LTM_MODE=isolated
+# - "isolated": Each user session gets a private, independent memory. This is recommended for most use cases to ensure data privacy.
+# - "shared" (Default): All users interact with a single, global memory. The agent learns collectively from all interactions.
+LTM_MODE=shared
+
+# Optional: Retrieval Distance Threshold
+# Controls strictness of vector search. Lower = stricter, Higher = more tolerant.
+# Default: 1.8 (Good balance)
+ACE_DISTANCE_THRESHOLD=1.8
 ```
 
 ## 🖥️ Usage
@@ -169,7 +174,7 @@ uv run python src/ace_rm/app.py
 ```
 
 *   **Left Pane**: Chat interface.
-*   **Center Pane**: Debug view showing **Curator** retrieval and **Reflector** analysis in real-time.
+*   **Center Pane**: Debug view showing **Curator** retrieval ("Retrieved Context"), **LTM Status** (Total Docs), and **Background Processing** status (Queue/Recent Activity).
 *   **Right Pane**: Live view of the Long-Term Memory database.
 
 ### Command Line Interface
