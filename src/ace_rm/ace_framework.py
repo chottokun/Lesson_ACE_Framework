@@ -5,7 +5,7 @@ import numpy as np
 import faiss
 import time
 import threading
-from typing import List, TypedDict, Optional, Annotated, Sequence, Union, Dict, Any
+from typing import List, TypedDict, Optional, Annotated, Sequence, Union, Dict, Any, Tuple
 from typing_extensions import NotRequired
 from tenacity import retry, stop_after_attempt, wait_exponential
 from sentence_transformers import SentenceTransformer
@@ -63,12 +63,14 @@ class ACE_Memory:
             os.makedirs(data_dir, exist_ok=True)
             self.db_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.db")
             self.index_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.faiss")
-            self.index_lock_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.faiss.lock")
         else:
             # Global paths in the project root
             self.db_path = DB_PATH
-            self.index_path = FAISS_INDEX_PATH
-            self.index_lock_path = f"{FAISS_INDEX_PATH}.lock"
+            self.index_path = f"{DB_PATH}_idx_{self.session_id}.index"
+        self.index_lock_path = f"{self.index_path}.lock"
+        
+        # Track last index loaded time
+        self.last_index_mtime = 0.0
 
         # Configure distance threshold from environment or use default
         default_threshold = float(os.environ.get('ACE_DISTANCE_THRESHOLD', '1.8'))
@@ -129,6 +131,9 @@ class ACE_Memory:
                 self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
                 self._rebuild_vectors_from_db()
                 faiss.write_index(self.index, self.index_path)
+            
+            if os.path.exists(self.index_path):
+                self.last_index_mtime = os.path.getmtime(self.index_path)
 
     def _rebuild_vectors_from_db(self):
         # This function should be called within a lock
@@ -142,6 +147,7 @@ class ACE_Memory:
                 self.index.add_with_ids(np.array(embeddings).astype('float32'), ids)
 
     def add(self, content: str, entities: List[str] = [], problem_class: str = ""):
+        # Simple insertion without deduplication (logic moved to BackgroundWorker)
         entities_json = json.dumps(entities)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -153,30 +159,98 @@ class ACE_Memory:
 
         vector = self.encoder.encode([content])
         with FileLock(self.index_lock_path):
-            # Read the latest index from disk before modifying
+            # Read fresh, add, write
             if os.path.exists(self.index_path):
                 try:
                     self.index = faiss.read_index(self.index_path)
                 except Exception:
-                    # If index is corrupt, start fresh
                     self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
-
+            
             self.index.add_with_ids(np.array(vector).astype('float32'), np.array([doc_id]))
             faiss.write_index(self.index, self.index_path)
+            self.last_index_mtime = os.path.getmtime(self.index_path)
+    
+    def find_similar_vectors(self, content: str, threshold: float = 0.3) -> List[Tuple[int, float]]:
+        """Find similar documents based on vector distance."""
+        vector = self.encoder.encode([content])
+        
+        with FileLock(self.index_lock_path):
+            if os.path.exists(self.index_path):
+                 try:
+                    # Check for updates from other processes
+                    current_mtime = os.path.getmtime(self.index_path)
+                    if current_mtime > self.last_index_mtime:
+                        self.index = faiss.read_index(self.index_path)
+                        self.last_index_mtime = current_mtime
+                 except Exception:
+                    pass
+
+            if self.index.ntotal > 0:
+                # Search slightly more candidates to filter by strict threshold
+                D, I = self.index.search(np.array(vector).astype('float32'), 3)
+                results = []
+                for i in range(len(I[0])):
+                    idx = I[0][i]
+                    dist = D[0][i]
+                    if idx >= 0 and dist < threshold:
+                        results.append((int(idx), float(dist)))
+                return results
+        return []
+
+    def get_document_by_id(self, doc_id: int) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_document(self, doc_id: int, content: str, entities: List[str], problem_class: str):
+        """Updates content, entities, problem_class and re-indexes vector."""
+        entities_json = json.dumps(entities)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE documents SET content = ?, entities = ?, problem_class = ?, timestamp = CURRENT_TIMESTAMP WHERE id = ?",
+                (content, entities_json, problem_class, doc_id)
+            )
+
+        # Update Vector Index
+        # FAISS IndexIDMap doesn't support simple update. We must remove and add.
+        # However, remove_ids requires a selector.
+        
+        vector = self.encoder.encode([content])
+        
+        with FileLock(self.index_lock_path):
+            if os.path.exists(self.index_path):
+                self.index = faiss.read_index(self.index_path)
+            
+            # Remove old vector
+            self.index.remove_ids(np.array([doc_id]).astype('int64'))
+            
+            # Add new vector
+            self.index.add_with_ids(np.array(vector).astype('float32'), np.array([doc_id]))
+            
+            faiss.write_index(self.index, self.index_path)
+            self.last_index_mtime = os.path.getmtime(self.index_path)
 
     def search(self, query: str, k: int = 3, distance_threshold: float = None) -> List[str]:
         """
         Search for relevant documents using hybrid retrieval (vector + keyword search).
-        
-        Args:
-            query: Search query string
-            k: Maximum number of results to return
-            distance_threshold: Maximum L2 distance for vector search (lower = more similar)
-                               If None, uses instance default (configurable via ACE_DISTANCE_THRESHOLD env var)
-        
-        Returns:
-            List of relevant document content strings
         """
+        # --- Fix for Stale Index ---
+        # Check if index file has changed on disk since last load
+        if os.path.exists(self.index_path):
+            current_mtime = os.path.getmtime(self.index_path)
+            if current_mtime > self.last_index_mtime:
+                # Reload index safely
+                with FileLock(self.index_lock_path):
+                     try:
+                        self.index = faiss.read_index(self.index_path)
+                        self.last_index_mtime = current_mtime
+                        print(f"[Memory] Index reloaded from disk (mtime={current_mtime})", flush=True)
+                     except Exception:
+                        pass # Keep current index if reload fails
+
         # Use instance threshold if not specified
         if distance_threshold is None:
             distance_threshold = self.distance_threshold
@@ -347,12 +421,90 @@ class BackgroundWorker(threading.Thread):
             data = json.loads(res)
             
             if data.get('should_store', False):
-                print(f"[BackgroundWorker] Storing analysis for Task {task_id}", flush=True)
-                self.memory.add(
-                    content=data.get('analysis', ''),
-                    entities=data.get('entities', []),
-                    problem_class=data.get('problem_class', '')
-                )
+                new_content = data.get('analysis', '')
+                new_entities = data.get('entities', [])
+                new_p_class = data.get('problem_class', '')
+
+                print(f"[BackgroundWorker] Analyzing storage strategy for Task {task_id}...", flush=True)
+                
+                # Check for similar existing knowledge
+                similar_docs = self.memory.find_similar_vectors(new_content, threshold=0.5)
+                
+                action = "NEW"
+                target_doc_id = None
+                final_content = new_content
+                final_entities = new_entities
+                final_p_class = new_p_class
+
+                if similar_docs:
+                    # Synthesizer Logic
+                    best_match_id, best_dist = similar_docs[0]
+                    existing_doc = self.memory.get_document_by_id(best_match_id)
+                    
+                    if existing_doc:
+                        existing_content = existing_doc['content']
+                        print(f"[BackgroundWorker] Similar doc found (ID {best_match_id}, dist={best_dist:.3f}). Running Synthesizer...", flush=True)
+                        
+                        synthesizer_prompt = f"""
+                        You are the "Knowledge Synthesizer" for an AI memory system.
+                        Your goal is to maintain a high-quality, non-redundant knowledge base.
+
+                        Compare the EXISTING KNOWLEDGE with the NEW KNOWLEDGE derived from a recent interaction.
+
+                        EXISTING KNOWLEDGE (ID: {best_match_id}):
+                        {existing_content}
+
+                        NEW KNOWLEDGE:
+                        {new_content}
+
+                        Determine the best action:
+                        1. **UPDATE**: The NEW knowledge adds value, corrects, or refines the EXISTING knowledge. Merge them into a single, comprehensive entry.
+                        2. **KEPT**: The NEW knowledge is redundant, inferior, or already covered by EXISTING. Keep EXISTING as is.
+                        3. **NEW**: The NEW knowledge is distinct enough to be a separate entry (e.g., different context, contradictory but valid alternative).
+
+                        Output JSON only:
+                        {{
+                            "action": "UPDATE" | "KEPT" | "NEW",
+                            "rationale": "Brief reason for decision",
+                            "synthesized_content": "Merged content (only for UPDATE, otherwise null)",
+                            "merged_entities": ["list", "of", "all", "entities"] (only for UPDATE)
+                        }}
+                        """
+                        
+                        try:
+                            syn_res = call_llm_with_retry(self.llm, [HumanMessage(content=synthesizer_prompt)]).content.strip()
+                            if "```json" in syn_res: syn_res = syn_res.split("```json")[1].split("```")[0]
+                            elif "```" in syn_res: syn_res = syn_res.split("```")[1].split("```")[0]
+                            
+                            syn_data = json.loads(syn_res)
+                            
+                            action = syn_data.get('action', 'NEW').upper()
+                            print(f"[BackgroundWorker] Synthesizer Decision: {action} ({syn_data.get('rationale')})", flush=True)
+
+                            if action == 'UPDATE':
+                                target_doc_id = best_match_id
+                                final_content = syn_data.get('synthesized_content', new_content)
+                                # Merge entities naively if not provided, or use LLM output
+                                llm_entities = syn_data.get('merged_entities')
+                                if llm_entities:
+                                    final_entities = llm_entities
+                                else:
+                                    # Fallback merge
+                                    exist_entities = json.loads(existing_doc['entities'])
+                                    final_entities = list(set(exist_entities + new_entities))
+                                    
+                        except Exception as e:
+                            print(f"[BackgroundWorker] Synthesizer Error: {e}. Defaulting to NEW.", flush=True)
+                
+                # Execute Action
+                if action == "UPDATE" and target_doc_id is not None:
+                    self.memory.update_document(target_doc_id, final_content, final_entities, final_p_class)
+                    print(f"[BackgroundWorker] Updated Document {target_doc_id}.", flush=True)
+                elif action == "KEPT":
+                    print(f"[BackgroundWorker] New knowledge discarded (redundant).", flush=True)
+                else:
+                    self.memory.add(final_content, final_entities, final_p_class)
+                    print(f"[BackgroundWorker] Added New Document.", flush=True)
             
             self.memory.mark_task_complete(task_id)
             print(f"[BackgroundWorker] Task {task_id} Completed.", flush=True)
