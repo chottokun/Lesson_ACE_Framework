@@ -150,6 +150,12 @@ Create a `.env` file in the root directory:
 ```env
 # Required: Compatible OpenAI API Key (e.g., Sakura, OpenAI, Azure)
 SAKURA_API_KEY=your_api_key_here
+
+# Optional: Long-Term Memory (LTM) Mode
+# Controls how the agent's memory is managed in a multi-user environment.
+# - "isolated" (Default): Each user session gets a private, independent memory. This is recommended for most use cases to ensure data privacy.
+# - "shared": All users interact with a single, global memory. The agent learns collectively from all interactions.
+LTM_MODE=isolated
 ```
 
 ## 🖥️ Usage
