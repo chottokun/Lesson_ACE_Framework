@@ -113,8 +113,6 @@ def process_chat(user_message: str, history: list, session_id: str):
     entities_str = f"Entities: {final_state.get('extracted_entities', [])}\nClass: {final_state.get('problem_class', '')}"
     context_list = final_state.get("context_docs", [])
     context_str = "\n---\n".join(context_list) if context_list else "No context retrieved."
-    lesson = final_state.get("lesson_learned", "N/A")
-    store_status = str(final_state.get("should_store", False))
     
     new_memory_df = get_memory_df(session_agent["memory"])
     new_task_df = get_task_df(session_agent["memory"])
@@ -125,16 +123,34 @@ def process_chat(user_message: str, history: list, session_id: str):
         {"role": "assistant", "content": response_text}
     ]
 
-    # Reflector status with queue count
-    pending_tasks = [t for t in session_agent["memory"].get_tasks() if t['status'] in ['pending', 'processing']]
-    if pending_tasks:
-        q_status = f"Enqueued ({len(pending_tasks)} tasks in queue)"
+    # Get meaningful status about background processing and LTM updates
+    all_tasks = session_agent["memory"].get_tasks()
+    pending_count = len([t for t in all_tasks if t['status'] in ['pending', 'processing']])
+    recent_done = [t for t in all_tasks if t['status'] == 'done'][:3]  # Last 3 completed
+    recent_failed = [t for t in all_tasks if t['status'] == 'failed'][:1]  # Last failure
+    
+    # Build status message
+    status_parts = []
+    if pending_count > 0:
+        status_parts.append(f"⏳ {pending_count} task(s) processing")
     else:
-        q_status = "All processed / Idle"
+        status_parts.append("✓ Queue idle")
+    
+    if recent_done:
+        status_parts.append(f"📊 {len(recent_done)} recently completed")
+    
+    if recent_failed:
+        status_parts.append(f"⚠️ {len(recent_failed)} failed")
+    
+    reflector_status = " | ".join(status_parts)
+    
+    # Get LTM update count (compare documents before and after)
+    current_doc_count = len(new_memory_df)
+    ltm_status = f"📚 Total: {current_doc_count} documents"
 
     return (
         new_history, entities_str, context_str,
-        lesson, q_status, new_memory_df, new_task_df
+        ltm_status, reflector_status, new_memory_df, new_task_df
     )
 
 def get_memory_df(memory_instance: ACE_Memory):
@@ -182,8 +198,8 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
             with gr.Group():
                 curator_intent = gr.Textbox(label="Curator: Intent & Entities", lines=4, interactive=False)
                 curator_context = gr.Textbox(label="Curator: Retrieved Context", lines=10, interactive=False)
-                reflector_lesson = gr.Textbox(label="Reflector: Learned Lesson", lines=6, interactive=False)
-                reflector_status = gr.Textbox(label="Reflector: Stored?", interactive=False)
+                ltm_status = gr.Textbox(label="LTM Status", interactive=False)
+                reflector_status = gr.Textbox(label="Background Processing", interactive=False)
             with gr.Group():
                 gr.Markdown("#### Search Settings")
                 distance_slider = gr.Slider(
@@ -227,13 +243,13 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
     submit_btn.click(
         process_chat,
         inputs=[msg, chatbot, session_id],
-        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table, task_table]
+        outputs=[chatbot, curator_intent, curator_context, ltm_status, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     msg.submit(
         process_chat,
         inputs=[msg, chatbot, session_id],
-        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table, task_table]
+        outputs=[chatbot, curator_intent, curator_context, ltm_status, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     refresh_mem_btn.click(refresh_ui_state, inputs=[session_id], outputs=[memory_table, task_table])
