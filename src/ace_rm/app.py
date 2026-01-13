@@ -81,12 +81,23 @@ def process_chat(user_message: str, history: list, session_id: str):
     if not user_message:
         # On empty input, just refresh the memory view
         memory_df = get_memory_df(session_agent["memory"])
-        return "", history, "", "", "", "", memory_df
+        return history, "", "", "", "", memory_df
 
+    # Gradio 6.x history is often a list of dictionaries [{'role': 'user', 'content': '...'}, ...]
+    # or the previous list of tuples format. We handle both to be safe.
     messages = []
-    for user_msg, ai_msg in history:
-        messages.append(HumanMessage(content=user_msg))
-        messages.append(AIMessage(content=ai_msg))
+    for m in history:
+        if isinstance(m, dict):
+            role = m.get("role")
+            content = m.get("content")
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
+        elif isinstance(m, (list, tuple)) and len(m) == 2:
+            messages.append(HumanMessage(content=m[0]))
+            messages.append(AIMessage(content=m[1]))
+
     messages.append(HumanMessage(content=user_message))
 
     initial_state = {
@@ -107,8 +118,14 @@ def process_chat(user_message: str, history: list, session_id: str):
     
     new_memory_df = get_memory_df(session_agent["memory"])
 
+    # Build new history in Gradio 6.x format
+    new_history = history + [
+        {"role": "user", "content": user_message},
+        {"role": "assistant", "content": response_text}
+    ]
+
     return (
-        "", response_text, entities_str, context_str,
+        new_history, entities_str, context_str,
         lesson, store_status, new_memory_df
     )
 
@@ -137,7 +154,9 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
             with gr.Row():
                 msg = gr.Textbox(scale=4, placeholder="Type a message...", show_label=False)
                 submit_btn = gr.Button("Send", scale=1, variant="primary")
-            clear_btn = gr.ClearButton([msg, chatbot])
+            clear_btn = gr.Button("Clear Chat")
+            clear_btn.click(lambda: ([], ""), None, [chatbot, msg])
+
         with gr.Column(scale=1):
             gr.Markdown("### 🛠️ Internals (Debug)")
             with gr.Group():
@@ -165,13 +184,14 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
     submit_btn.click(
         process_chat,
         inputs=[msg, chatbot, session_id],
-        outputs=[msg, chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table]
-    )
+        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table]
+    ).then(lambda: "", None, msg) # Clear msg AFTER update
+
     msg.submit(
         process_chat,
         inputs=[msg, chatbot, session_id],
-        outputs=[msg, chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table]
-    )
+        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table]
+    ).then(lambda: "", None, msg) # Clear msg AFTER update
     
     def refresh_memory_display(session_id_str: str):
         session_agent = get_session_agent(session_id_str)
