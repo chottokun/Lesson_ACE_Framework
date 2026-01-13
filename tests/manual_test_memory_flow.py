@@ -17,50 +17,76 @@ import sys
 import shutil
 import sqlite3
 import time
+import json
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_community.chat_models.fake import FakeListChatModel
+
 
 # Ensure src is in path if running directly from project root or tests/
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(os.path.join(project_root, "src"))
 
-from ace_rm.ace_framework import build_ace_agent, ACE_Memory, MODEL_NAME, BASE_URL, BackgroundWorker
+from ace_rm.ace_framework import build_ace_agent, ACE_Memory, MODEL_NAME, BASE_URL, BackgroundWorker, DB_PATH, FAISS_INDEX_PATH
 
 # Load environment variables
 load_dotenv()
 
-def cleanup_db():
-    """Removes existing memory files to ensure a clean test state."""
-    print("\n[Setup] Cleaning up existing memory files...")
-    files_to_remove = ["ace_memory.db", "ace_memory.faiss"]
-    for file in files_to_remove:
+def cleanup_db(session_id="test_session"):
+    """Removes existing memory files for a specific session to ensure a clean test state."""
+    print(f"\n[Setup] Cleaning up memory files for session: {session_id}...")
+    # Clean up session-specific files
+    data_dir = os.path.join(project_root, "user_data")
+    if os.path.exists(data_dir):
+        files_to_remove = [
+            f"ace_memory_{session_id}.db",
+            f"ace_memory_{session_id}.faiss",
+            f"ace_memory_{session_id}.faiss.lock"
+        ]
+        for file in files_to_remove:
+            path = os.path.join(data_dir, file)
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"  Removed: {file}")
+
+    # Clean up global files as well for a completely clean slate
+    global_files = [DB_PATH, FAISS_INDEX_PATH, f"{FAISS_INDEX_PATH}.lock"]
+    for file in global_files:
         path = os.path.join(project_root, file)
         if os.path.exists(path):
             os.remove(path)
-            print(f"  Removed: {file}")
+            print(f"  Removed global: {file}")
+
 
 def run_test():
-    cleanup_db()
+    test_session_id = "test_session"
+    cleanup_db(test_session_id)
     
-    print("\n--- Starting ACE Memory Flow Test ---")
-    
-    # 1. Initialize Components
-    memory = ACE_Memory()
-    api_key = os.environ.get("SAKURA_API_KEY", "dummy")
-    
-    llm = ChatOpenAI(
-        model=MODEL_NAME, 
-        api_key=api_key, 
-        base_url=BASE_URL,
-        temperature=0
-    )
-    
-    ace_app = build_ace_agent(llm, memory)
+    print("\n--- Starting ACE Memory Flow Test (with Mock LLM) ---")
 
-    # Start Background Worker for Async Reflection
-    worker = BackgroundWorker(memory, llm)
+    # Mock LLM responses
+    curator_response_1 = json.dumps({"entities": ["3L jug", "5L jug"], "problem_class": "Measurement Puzzle", "search_query": "measure 4L"})
+    agent_response_1 = "Solution for 3L/5L jug problem..."
+    analysis_response = json.dumps({
+        "analysis": "This is a classic water jug problem, which involves measuring a specific quantity of liquid using containers of different sizes. The general strategy involves pouring water between the jugs.",
+        "entities": ["jug", "measurement", "pouring"],
+        "problem_class": "Water Jug Problem",
+        "should_store": True
+    })
+    curator_response_2 = json.dumps({"entities": ["5L jug", "8L jug"], "problem_class": "Measurement Puzzle", "search_query": "water jug measurement strategy"})
+    agent_response_2 = "Applying same strategy to 5L/8L jugs..."
+
+    mock_llm = FakeListChatModel(responses=[
+        curator_response_1, agent_response_1, analysis_response,
+        curator_response_2, agent_response_2
+    ])
+
+    # Initialize components for a specific test session
+    memory = ACE_Memory(session_id=test_session_id)
+    # Disable tools for this test since FakeListChatModel doesn't support them
+    ace_app = build_ace_agent(mock_llm, memory, use_tools=False)
+    worker = BackgroundWorker(llm=mock_llm, memory_session_id=test_session_id)
     worker.start()
     
     # Step 1: Structural Learning (Storage)

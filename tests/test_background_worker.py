@@ -4,24 +4,19 @@ import time
 import json
 import sqlite3
 import unittest
+import uuid
 from unittest.mock import MagicMock
 from ace_rm.ace_framework import ACE_Memory, BackgroundWorker
 from langchain_core.messages import HumanMessage, AIMessage
 
 @pytest.fixture
 def memory():
-    # Use temporary files for testing
-    db_path = "test_worker.db"
-    index_path = "test_worker.faiss"
-    if os.path.exists(db_path): os.remove(db_path)
-    if os.path.exists(index_path): os.remove(index_path)
-    
-    mem = ACE_Memory(db_path, index_path)
+    # Use a unique session ID for each test run to ensure isolation
+    session_id = f"test_worker_{uuid.uuid4()}"
+    mem = ACE_Memory(session_id=session_id)
     yield mem
-    
-    # Cleanup
-    if os.path.exists(db_path): os.remove(db_path)
-    if os.path.exists(index_path): os.remove(index_path)
+    # Teardown
+    mem.clear()
 
 def test_queue_operations(memory):
     # 1. Enqueue
@@ -61,7 +56,7 @@ def test_background_worker_process_success(memory):
     })
     mock_llm.invoke.return_value = AIMessage(content=mock_response_content)
     
-    worker = BackgroundWorker(memory, mock_llm)
+    worker = BackgroundWorker(llm=mock_llm, memory_session_id=memory.session_id)
     
     # Enqueue a task
     memory.enqueue_task("Calculate 1+1", "The answer is 2")
@@ -93,7 +88,7 @@ def test_background_worker_process_failure(memory):
     with unittest.mock.patch('ace_rm.ace_framework.call_llm_with_retry') as mock_call:
         mock_call.side_effect = Exception("API Connection Error")
         
-        worker = BackgroundWorker(memory, mock_llm)
+        worker = BackgroundWorker(llm=mock_llm, memory_session_id=memory.session_id)
         
         memory.enqueue_task("Fail me", "Ok")
         task = memory.fetch_pending_task()
@@ -114,7 +109,7 @@ def test_background_worker_invalid_json(memory):
     # Simulate Non-JSON output
     mock_llm.invoke.return_value = AIMessage(content="This is not JSON.")
     
-    worker = BackgroundWorker(memory, mock_llm)
+    worker = BackgroundWorker(llm=mock_llm, memory_session_id=memory.session_id)
     
     memory.enqueue_task("Bad JSON", "Ok")
     task = memory.fetch_pending_task()

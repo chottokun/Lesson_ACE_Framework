@@ -9,6 +9,7 @@ from typing import List, TypedDict, Optional, Annotated, Sequence, Union, Dict, 
 from typing_extensions import NotRequired
 from tenacity import retry, stop_after_attempt, wait_exponential
 from sentence_transformers import SentenceTransformer
+from filelock import FileLock
 from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
@@ -53,9 +54,22 @@ class AgentState(TypedDict):
 
 # --- ACE Memory (Persistent Layer) ---
 class ACE_Memory:
-    def __init__(self, db_path=DB_PATH, index_path=FAISS_INDEX_PATH):
-        self.db_path = db_path
-        self.index_path = index_path
+    def __init__(self, session_id: Optional[str] = None):
+        self.session_id = session_id
+
+        if self.session_id:
+            # Session-specific paths in a dedicated folder
+            data_dir = "user_data"
+            os.makedirs(data_dir, exist_ok=True)
+            self.db_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.db")
+            self.index_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.faiss")
+            self.index_lock_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.faiss.lock")
+        else:
+            # Global paths in the project root
+            self.db_path = DB_PATH
+            self.index_path = FAISS_INDEX_PATH
+            self.index_lock_path = f"{FAISS_INDEX_PATH}.lock"
+
         # Initialize embedding model (cpu-friendly)
         self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
         self.dimension = 384
@@ -100,18 +114,20 @@ class ACE_Memory:
             """)
 
     def _load_or_build_index(self):
-        if os.path.exists(self.index_path):
-            try:
-                self.index = faiss.read_index(self.index_path)
-            except:
+        with FileLock(self.index_lock_path):
+            if os.path.exists(self.index_path):
+                try:
+                    self.index = faiss.read_index(self.index_path)
+                except Exception:
+                    self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
+                    self._rebuild_vectors_from_db()
+            else:
                 self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
                 self._rebuild_vectors_from_db()
-        else:
-            self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
-            self._rebuild_vectors_from_db()
-            faiss.write_index(self.index, self.index_path)
+                faiss.write_index(self.index, self.index_path)
 
     def _rebuild_vectors_from_db(self):
+        # This function should be called within a lock
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, content FROM documents")
@@ -132,8 +148,17 @@ class ACE_Memory:
             doc_id = cursor.lastrowid
 
         vector = self.encoder.encode([content])
-        self.index.add_with_ids(np.array(vector).astype('float32'), np.array([doc_id]))
-        faiss.write_index(self.index, self.index_path)
+        with FileLock(self.index_lock_path):
+            # Read the latest index from disk before modifying
+            if os.path.exists(self.index_path):
+                try:
+                    self.index = faiss.read_index(self.index_path)
+                except Exception:
+                    # If index is corrupt, start fresh
+                    self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
+
+            self.index.add_with_ids(np.array(vector).astype('float32'), np.array([doc_id]))
+            faiss.write_index(self.index, self.index_path)
 
     def search(self, query: str, k: int = 3) -> List[str]:
         results = {}
@@ -163,12 +188,17 @@ class ACE_Memory:
         return list(results.values())
     
     def clear(self):
-        """Clears all memory (DB and Index). For debug/reset purposes."""
+        """Clears all memory (DB and Index) for the current session or globally."""
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
-        self.__init__(self.db_path, self.index_path)
+        if os.path.exists(self.index_lock_path):
+            try:
+                os.remove(self.index_lock_path)
+            except OSError:
+                pass # File might be locked by another process
+        self.__init__(session_id=self.session_id)
 
     def get_all(self) -> List[Dict[str, Any]]:
         """Retrieves all documents from the DB."""
@@ -211,9 +241,9 @@ class ACE_Memory:
 
 # --- Background Worker ---
 class BackgroundWorker(threading.Thread):
-    def __init__(self, memory: ACE_Memory, llm: ChatOpenAI, interval: float = 1.0):
+    def __init__(self, llm: ChatOpenAI, memory_session_id: Optional[str] = None, interval: float = 1.0):
         super().__init__(daemon=True) # Daemon thread exits when main program exits
-        self.memory = memory
+        self.memory = ACE_Memory(session_id=memory_session_id)
         self.llm = llm
         self.interval = interval
         self.running = True
@@ -296,28 +326,31 @@ class BackgroundWorker(threading.Thread):
 def call_llm_with_retry(llm, messages):
     return llm.invoke(messages)
 
-def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory):
+def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, use_tools: bool = True):
     
-    # Tool Definition for the Agent
-    @tool
-    def search_memory_tool(query: str):
-        """Searches the agent's long-term memory for relevant information, facts, or past experiences."""
-        docs = memory.search(query)
-        if not docs:
-            return "No relevant information found in memory."
-        return "\n\n".join(docs)
+    tools = []
+    if use_tools:
+        # Tool Definition for the Agent
+        @tool
+        def search_memory_tool(query: str):
+            """Searches the agent's long-term memory for relevant information, facts, or past experiences."""
+            docs = memory.search(query)
+            if not docs:
+                return "No relevant information found in memory."
+            return "\n\n".join(docs)
+        tools = [search_memory_tool]
 
-    tools = [search_memory_tool]
-    
-    # Use prebuilt ToolNode
-    tool_node_instance = ToolNode(tools)
+    # Use prebuilt ToolNode only if tools are enabled
+    tool_node_instance = ToolNode(tools) if use_tools else None
 
     def tool_executor_node(state: AgentState):
         """Executes tools and appends output to history."""
+        if not tool_node_instance:
+            return {} # Should not be called if tools are disabled
         result = tool_node_instance.invoke(state)
         return {"messages": state['messages'] + result['messages']}
 
-    llm_with_tools = llm.bind_tools(tools)
+    llm_with_tools = llm.bind_tools(tools) if use_tools else llm
 
     def curator_node(state: AgentState):
         """Analyzes intent and retrieves context."""
@@ -419,30 +452,35 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory):
     
     workflow.add_node("curator", curator_node)
     workflow.add_node("agent", agent_node)
-    workflow.add_node("tool_executor", tool_executor_node)
     workflow.add_node("reflector", reflector_node)
 
+    if use_tools:
+        workflow.add_node("tool_executor", tool_executor_node)
+
     workflow.set_entry_point("curator")
-    
     workflow.add_edge("curator", "agent")
     
-    def check_tool_call(state: AgentState):
-        messages = state['messages']
-        last_message = messages[-1]
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            return "tool_executor"
-        return "reflector"
+    if use_tools:
+        def check_tool_call(state: AgentState):
+            messages = state['messages']
+            last_message = messages[-1]
+            if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+                return "tool_executor"
+            return "reflector"
 
-    workflow.add_conditional_edges(
-        "agent",
-        check_tool_call,
-        {
-            "tool_executor": "tool_executor",
-            "reflector": "reflector"
-        }
-    )
-    
-    workflow.add_edge("tool_executor", "agent")
+        workflow.add_conditional_edges(
+            "agent",
+            check_tool_call,
+            {
+                "tool_executor": "tool_executor",
+                "reflector": "reflector"
+            }
+        )
+        workflow.add_edge("tool_executor", "agent")
+    else:
+        # If no tools, agent always goes to reflector
+        workflow.add_edge("agent", "reflector")
+
     workflow.add_edge("reflector", END)
 
     return workflow.compile()

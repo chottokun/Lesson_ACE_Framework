@@ -1,21 +1,15 @@
 import os
 import pytest
+import uuid
 from ace_rm.ace_framework import ACE_Memory
 
 @pytest.fixture
 def memory():
-    # Use temporary files for testing
-    db_path = "test_memory.db"
-    index_path = "test_memory.faiss"
-    if os.path.exists(db_path): os.remove(db_path)
-    if os.path.exists(index_path): os.remove(index_path)
-    
-    mem = ACE_Memory(db_path, index_path)
+    session_id = f"test_memory_{uuid.uuid4()}"
+    mem = ACE_Memory(session_id=session_id)
     yield mem
-    
-    # Cleanup
-    if os.path.exists(db_path): os.remove(db_path)
-    if os.path.exists(index_path): os.remove(index_path)
+    # Teardown
+    mem.clear()
 
 def test_add_and_search(memory):
     memory.add("The capital of France is Paris.", entities=["France", "Paris"], problem_class="Geography")
