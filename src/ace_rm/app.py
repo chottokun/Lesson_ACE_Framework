@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 load_dotenv()
 
 # --- Mode Configuration ---
-LTM_MODE = os.getenv("LTM_MODE", "isolated").lower()  # "isolated" or "shared"
+LTM_MODE = os.getenv("LTM_MODE", "shared").lower()  # "isolated" or "shared"
 print(f"Running in LTM_MODE: {LTM_MODE}", flush=True)
 
 # --- Global/Session-based Initialization ---
@@ -117,6 +117,7 @@ def process_chat(user_message: str, history: list, session_id: str):
     store_status = str(final_state.get("should_store", False))
     
     new_memory_df = get_memory_df(session_agent["memory"])
+    new_task_df = get_task_df(session_agent["memory"])
 
     # Build new history in Gradio 6.x format
     new_history = history + [
@@ -124,9 +125,16 @@ def process_chat(user_message: str, history: list, session_id: str):
         {"role": "assistant", "content": response_text}
     ]
 
+    # Reflector status with queue count
+    pending_tasks = [t for t in session_agent["memory"].get_tasks() if t['status'] in ['pending', 'processing']]
+    if pending_tasks:
+        q_status = f"Enqueued ({len(pending_tasks)} tasks in queue)"
+    else:
+        q_status = "All processed / Idle"
+
     return (
         new_history, entities_str, context_str,
-        lesson, store_status, new_memory_df
+        lesson, q_status, new_memory_df, new_task_df
     )
 
 def get_memory_df(memory_instance: ACE_Memory):
@@ -135,10 +143,22 @@ def get_memory_df(memory_instance: ACE_Memory):
         return pd.DataFrame(columns=["id", "content", "entities", "problem_class", "timestamp"])
     return pd.DataFrame(data)
 
+def get_task_df(memory_instance: ACE_Memory):
+    data = memory_instance.get_tasks()
+    if not data:
+        return pd.DataFrame(columns=["id", "user_input", "status", "created_at", "updated_at", "error_msg"])
+    return pd.DataFrame(data)
+
 def reset_memory_handler(session_id: str):
     session_agent = get_session_agent(session_id)
     session_agent["memory"].clear()
     return get_memory_df(session_agent["memory"])
+
+def apply_distance_threshold(session_id: str, threshold: float):
+    """Apply new distance threshold to the memory instance"""
+    session_agent = get_session_agent(session_id)
+    session_agent["memory"].distance_threshold = threshold
+    return f"Distance threshold set to {threshold:.1f}"
 
 # --- UI Layout ---
 with gr.Blocks(title="ACE Agent Framework") as demo:
@@ -164,6 +184,14 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
                 curator_context = gr.Textbox(label="Curator: Retrieved Context", lines=10, interactive=False)
                 reflector_lesson = gr.Textbox(label="Reflector: Learned Lesson", lines=6, interactive=False)
                 reflector_status = gr.Textbox(label="Reflector: Stored?", interactive=False)
+            with gr.Group():
+                gr.Markdown("#### Search Settings")
+                distance_slider = gr.Slider(
+                    minimum=1.0, maximum=3.0, value=1.8, step=0.1,
+                    label="Distance Threshold (lower = stricter)",
+                    info="Adjust search relevance filtering"
+                )
+                gr.Markdown("*Lower values return only highly relevant results*")
 
     with gr.Row():
         with gr.Column():
@@ -175,32 +203,54 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
             )
             refresh_mem_btn = gr.Button("Refresh Memory")
             reset_mem_btn = gr.Button("⚠️ Reset All Memory", variant="stop")
+        
+        with gr.Column():
+            gr.Markdown("### ⏳ Background Reflection Queue")
+            task_table = gr.DataFrame(
+                headers=["id", "user_input", "status", "created_at", "updated_at", "error_msg"],
+                interactive=False, wrap=True
+            )
+            gr.Markdown("*Queue auto-refreshes every 5 seconds*")
+
+    # Timer for auto-refresh
+    timer = gr.Timer(5)
 
     def on_load(session_id_str: str):
         print(f"UI loaded for session: {session_id_str}", flush=True)
         session_agent = get_session_agent(session_id_str)
-        return get_memory_df(session_agent["memory"])
+        return get_memory_df(session_agent["memory"]), get_task_df(session_agent["memory"])
+
+    def refresh_ui_state(session_id_str: str):
+        session_agent = get_session_agent(session_id_str)
+        return get_memory_df(session_agent["memory"]), get_task_df(session_agent["memory"])
 
     submit_btn.click(
         process_chat,
         inputs=[msg, chatbot, session_id],
-        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table]
+        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     msg.submit(
         process_chat,
         inputs=[msg, chatbot, session_id],
-        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table]
+        outputs=[chatbot, curator_intent, curator_context, reflector_lesson, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
-    
-    def refresh_memory_display(session_id_str: str):
-        session_agent = get_session_agent(session_id_str)
-        return get_memory_df(session_agent["memory"])
 
-    refresh_mem_btn.click(refresh_memory_display, inputs=[session_id], outputs=[memory_table])
+    refresh_mem_btn.click(refresh_ui_state, inputs=[session_id], outputs=[memory_table, task_table])
     reset_mem_btn.click(reset_memory_handler, inputs=[session_id], outputs=[memory_table])
     
-    demo.load(on_load, inputs=[session_id], outputs=[memory_table])
+    # Distance threshold control
+    threshold_status = gr.Textbox(visible=False)  # Hidden status indicator
+    distance_slider.change(
+        apply_distance_threshold,
+        inputs=[session_id, distance_slider],
+        outputs=[threshold_status]
+    )
+    
+    # Auto-refresh wiring
+    timer.tick(refresh_ui_state, inputs=[session_id], outputs=[memory_table, task_table])
+    
+    demo.load(on_load, inputs=[session_id], outputs=[memory_table, task_table])
 
 if __name__ == "__main__":
     print("Starting Gradio app...", flush=True)

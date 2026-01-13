@@ -70,6 +70,10 @@ class ACE_Memory:
             self.index_path = FAISS_INDEX_PATH
             self.index_lock_path = f"{FAISS_INDEX_PATH}.lock"
 
+        # Configure distance threshold from environment or use default
+        default_threshold = float(os.environ.get('ACE_DISTANCE_THRESHOLD', '1.8'))
+        self.distance_threshold = default_threshold
+
         # Initialize embedding model (cpu-friendly)
         self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
         self.dimension = 384
@@ -160,13 +164,40 @@ class ACE_Memory:
             self.index.add_with_ids(np.array(vector).astype('float32'), np.array([doc_id]))
             faiss.write_index(self.index, self.index_path)
 
-    def search(self, query: str, k: int = 3) -> List[str]:
+    def search(self, query: str, k: int = 3, distance_threshold: float = None) -> List[str]:
+        """
+        Search for relevant documents using hybrid retrieval (vector + keyword search).
+        
+        Args:
+            query: Search query string
+            k: Maximum number of results to return
+            distance_threshold: Maximum L2 distance for vector search (lower = more similar)
+                               If None, uses instance default (configurable via ACE_DISTANCE_THRESHOLD env var)
+        
+        Returns:
+            List of relevant document content strings
+        """
+        # Use instance threshold if not specified
+        if distance_threshold is None:
+            distance_threshold = self.distance_threshold
+            
         results = {}
-        # 1. Vector Search
+        # 1. Vector Search with relevance filtering
         if self.index.ntotal > 0:
             query_vec = self.encoder.encode([query])
-            D, I = self.index.search(np.array(query_vec).astype('float32'), k)
-            found_ids = [int(idx) for idx in I[0] if idx >= 0]
+            # Search for more candidates to allow for filtering
+            search_k = min(k * 3, self.index.ntotal)  
+            D, I = self.index.search(np.array(query_vec).astype('float32'), search_k)
+            
+            # Filter by distance threshold
+            found_ids = []
+            for distance, idx in zip(D[0], I[0]):
+                if idx >= 0 and distance < distance_threshold:
+                    found_ids.append(int(idx))
+            
+            # Limit to k results after filtering
+            found_ids = found_ids[:k]
+            
             if found_ids:
                 placeholders = ','.join('?' * len(found_ids))
                 with sqlite3.connect(self.db_path) as conn:
@@ -175,16 +206,19 @@ class ACE_Memory:
                     for row in cursor.fetchall():
                         results[row[0]] = row[0]
 
-        # 2. Keyword Search (FTS5)
-        with sqlite3.connect(self.db_path) as conn:
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT content FROM documents_fts WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?", (query, k))
-                for row in cursor.fetchall():
-                    if row[0] not in results:
-                        results[row[0]] = row[0]
-            except Exception:
-                pass # FTS syntax error or other issues
+        # 2. Keyword Search (FTS5) - only if no vector results
+        # This ensures we don't overwhelm with irrelevant keyword matches
+        if len(results) < k:
+            with sqlite3.connect(self.db_path) as conn:
+                try:
+                    cursor = conn.cursor()
+                    remaining = k - len(results)
+                    cursor.execute("SELECT content FROM documents_fts WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?", (query, remaining))
+                    for row in cursor.fetchall():
+                        if row[0] not in results:
+                            results[row[0]] = row[0]
+                except Exception:
+                    pass # FTS syntax error or other issues
         return list(results.values())
     
     def clear(self):
@@ -206,6 +240,14 @@ class ACE_Memory:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT id, content, entities, problem_class, timestamp FROM documents ORDER BY id DESC")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_tasks(self) -> List[Dict[str, Any]]:
+        """Retrieves all tasks from the task queue."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, user_input, status, created_at, updated_at, error_msg FROM task_queue ORDER BY id DESC LIMIT 20")
             return [dict(row) for row in cursor.fetchall()]
 
     # --- Queue Operations ---
