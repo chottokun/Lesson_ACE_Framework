@@ -15,6 +15,11 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langchain_core.tools import tool, StructuredTool
 from langgraph.prebuilt import ToolNode
+from ace_rm import prompts
+from dotenv import load_dotenv
+
+# Load environment variables at the earliest possible moment
+load_dotenv()
 
 # --- Configuration & Setup ---
 DB_PATH = os.environ.get("ACE_DB_PATH", "ace_memory.db")
@@ -381,29 +386,7 @@ class BackgroundWorker(threading.Thread):
         user_input = task['user_input']
         agent_output = task['agent_output']
 
-        prompt = f"""
-        Analyze this interaction. Extract Structural Knowledge (MFR) and General Principles.
-        
-        1. **Specific Analysis**: If a problem is presented, define:
-           - Entities, State Variables, Actions, Constraints.
-           - Summary of the solution.
-
-        2. **Abstraction & Generalization**:
-           - Abstract the specific details into a general pattern or rule.
-           - Identify the underlying problem class (e.g., "Constraint Satisfaction", "Resource Allocation").
-           - Define a general strategy derived from this instance.
-        
-        User: {user_input}
-        AI: {agent_output}
-        
-        Output JSON only:
-        {{
-            "analysis": "**Specific Model**:\\n[Details...]\\n\\n**Generalization**:\\n[Details...]",
-            "entities": ["list", "of", "key", "entities"],
-            "problem_class": "Identified Problem Class",
-            "should_store": true/false
-        }}
-        """
+        prompt = prompts.ANALYSIS_PROMPT.format(user_input=user_input, agent_output=agent_output)
         
         try:
             res = call_llm_with_retry(self.llm, [HumanMessage(content=prompt)]).content.strip()
@@ -438,31 +421,11 @@ class BackgroundWorker(threading.Thread):
                         existing_content = existing_doc['content']
                         print(f"[BackgroundWorker] Similar doc found (ID {best_match_id}, dist={best_dist:.3f}). Running Synthesizer...", flush=True)
                         
-                        synthesizer_prompt = f"""
-                        You are the "Knowledge Synthesizer" for an AI memory system.
-                        Your goal is to maintain a high-quality, non-redundant knowledge base.
-
-                        Compare the EXISTING KNOWLEDGE with the NEW KNOWLEDGE derived from a recent interaction.
-
-                        EXISTING KNOWLEDGE (ID: {best_match_id}):
-                        {existing_content}
-
-                        NEW KNOWLEDGE:
-                        {new_content}
-
-                        Determine the best action:
-                        1. **UPDATE**: The NEW knowledge adds value, corrects, or refines the EXISTING knowledge. Merge them into a single, comprehensive entry.
-                        2. **KEPT**: The NEW knowledge is redundant, inferior, or already covered by EXISTING. Keep EXISTING as is.
-                        3. **NEW**: The NEW knowledge is distinct enough to be a separate entry (e.g., different context, contradictory but valid alternative).
-
-                        Output JSON only:
-                        {{
-                            "action": "UPDATE" | "KEPT" | "NEW",
-                            "rationale": "Brief reason for decision",
-                            "synthesized_content": "Merged content (only for UPDATE, otherwise null)",
-                            "merged_entities": ["list", "of", "all", "entities"] (only for UPDATE)
-                        }}
-                        """
+                        synthesizer_prompt = prompts.SYNTHESIZER_PROMPT.format(
+                            best_match_id=best_match_id,
+                            existing_content=existing_content,
+                            new_content=new_content
+                        )
                         
                         try:
                             syn_res = call_llm_with_retry(self.llm, [HumanMessage(content=synthesizer_prompt)]).content.strip()
@@ -550,24 +513,10 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, use_tools: bool = True)
         history_txt = "\n".join([f"{type(m).__name__}: {m.content}" for m in messages[-5:-1]])
 
         # Intent Analysis Prompt
-        prompt = f"""
-        Based on the conversation history, analyze the user's latest request.
-        
-        Target TWO things:
-        1. Specific entities and facts mentioned in the request.
-        2. Abstract problem classes, structural patterns, or general principles relevant to the request.
-        
-        User Request: "{last_user_msg.content}"
-        History: 
-        {history_txt}
-        
-        Output JSON only:
-        {{
-            "entities": ["entity1", "entity2"],
-            "problem_class": "Abstract Problem Class",
-            "search_query": "Single effective search query string combining specific entities and abstract concepts"
-        }}
-        """
+        prompt = prompts.INTENT_ANALYSIS_PROMPT.format(
+            user_input=last_user_msg.content,
+            history_txt=history_txt
+        )
         
         try:
             res = call_llm_with_retry(llm, [HumanMessage(content=prompt)]).content.strip()
@@ -587,7 +536,7 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, use_tools: bool = True)
             context_msg = []
             if docs:
                 context_str = "\n".join(docs)
-                context_msg = [SystemMessage(content=f"--- Retrieved Context ---\n{context_str}\n-----------------------")]
+                context_msg = [SystemMessage(content=prompts.RETRIEVED_CONTEXT_TEMPLATE.format(context_str=context_str))]
             
             return {
                 "context_docs": docs,

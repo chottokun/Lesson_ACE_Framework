@@ -222,3 +222,4 @@ __marimo__/
 *.faiss
 *.lock
 *.index
+ace_memory.db_idx_None.index
