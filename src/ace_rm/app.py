@@ -6,7 +6,10 @@ import os
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage, AIMessage
-from ace_rm.ace_framework import build_ace_agent, ACE_Memory, MODEL_NAME, BASE_URL, BackgroundWorker
+from ace_rm.ace_framework import (
+    build_ace_agent, ACE_Memory, BackgroundWorker,
+    MODEL_NAME, BASE_URL, OPENAI_API_KEY, LLM_TEMPERATURE
+)
 from langchain_openai import ChatOpenAI
 
 # Load environment variables
@@ -24,9 +27,9 @@ if LTM_MODE == "shared":
     print("Initializing shared agent...", flush=True)
     llm = ChatOpenAI(
         model=MODEL_NAME,
-        api_key=os.environ.get("SAKURA_API_KEY", "dummy"),
+        api_key=OPENAI_API_KEY,
         base_url=BASE_URL,
-        temperature=0
+        temperature=LLM_TEMPERATURE
     )
     # No session_id provided for a shared memory
     shared_memory = ACE_Memory()
@@ -54,9 +57,9 @@ def get_session_agent(session_id: str):
         print(f"Creating new agent for session: {session_id}", flush=True)
         llm = ChatOpenAI(
             model=MODEL_NAME,
-            api_key=os.environ.get("SAKURA_API_KEY", "dummy"),
+            api_key=OPENAI_API_KEY,
             base_url=BASE_URL,
-            temperature=0
+            temperature=LLM_TEMPERATURE
         )
         memory_instance = ACE_Memory(session_id=session_id)
         ace_app_instance = build_ace_agent(llm, memory_instance)

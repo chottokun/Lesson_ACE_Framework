@@ -17,23 +17,16 @@ from langchain_core.tools import tool, StructuredTool
 from langgraph.prebuilt import ToolNode
 
 # --- Configuration & Setup ---
-DB_PATH = "ace_memory.db"
-FAISS_INDEX_PATH = "ace_memory.faiss"
+DB_PATH = os.environ.get("ACE_DB_PATH", "ace_memory.db")
+FAISS_INDEX_PATH = os.environ.get("ACE_FAISS_INDEX_PATH", "ace_memory.faiss")
 
-# API Setup
-SAKURA_MODEL = "gpt-oss-120b"
-SAKURA_BASE_URL = "https://api.ai.sakura.ad.jp/v1/"
+# LLM Configuration
+MODEL_NAME = os.environ.get("LLM_MODEL", "gpt-oss-120b")
+BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.ai.sakura.ad.jp/v1/")
+LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
 
-try:
-    OPENAI_API_KEY = os.environ.get('SAKURA_API_KEY')
-    if not OPENAI_API_KEY:
-        # Placeholder or fallback
-        OPENAI_API_KEY = "dummy_key" 
-except Exception:
-    OPENAI_API_KEY = "dummy_key"
-
-MODEL_NAME = SAKURA_MODEL
-BASE_URL = SAKURA_BASE_URL
+# API Key handling (prefer LLM_API_KEY, fallback to SAKURA_API_KEY for backward compatibility)
+OPENAI_API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("SAKURA_API_KEY", "dummy_key")
 
 # --- Agent State ---
 class AgentState(TypedDict):
