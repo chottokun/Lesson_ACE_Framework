@@ -70,13 +70,23 @@ class ACE_Memory:
         # Track last index loaded time
         self.last_index_mtime = 0.0
 
-        # Configure distance threshold from environment or use default
-        default_threshold = float(os.environ.get('ACE_DISTANCE_THRESHOLD', '1.8'))
-        self.distance_threshold = default_threshold
+        # Configure distance threshold and metric from environment or use default
+        self.distance_metric = os.environ.get('ACE_DISTANCE_METRIC', 'l2').lower()
+        default_threshold = 0.7 if self.distance_metric == 'cosine' else 1.8
+        self.distance_threshold = float(os.environ.get('ACE_DISTANCE_THRESHOLD', str(default_threshold)))
 
-        # Initialize embedding model (cpu-friendly)
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        self.dimension = 384
+        # Initialize embedding model (configurable via environment variables)
+        self.encoder_name = os.environ.get('ACE_EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
+        self.dimension = int(os.environ.get('ACE_EMBEDDING_DIMENSION', '384'))
+        
+        # Performance optimization: use GPU if available for ruri models
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.encoder = SentenceTransformer(self.encoder_name, device=device)
+
+        # Prefix configuration for models like ruri-v3
+        # ruri-v3 uses "検索クエリ: " for queries and "検索文書: " for docs
+        self.use_prefixes = "ruri" in self.encoder_name.lower()
 
         self._init_db()
         self._load_or_build_index()
@@ -123,10 +133,16 @@ class ACE_Memory:
                 try:
                     self.index = faiss.read_index(self.index_path)
                 except Exception:
-                    self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
+                    if self.distance_metric == 'cosine':
+                        self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
+                    else:
+                        self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
                     self._rebuild_vectors_from_db()
             else:
-                self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
+                if self.distance_metric == 'cosine':
+                    self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
+                else:
+                    self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
                 self._rebuild_vectors_from_db()
                 faiss.write_index(self.index, self.index_path)
             
@@ -140,7 +156,12 @@ class ACE_Memory:
             cursor.execute("SELECT id, content FROM documents")
             rows = cursor.fetchall()
             if rows:
-                embeddings = self.encoder.encode([r[1] for r in rows])
+                contents = [r[1] for r in rows]
+                if self.use_prefixes:
+                    contents = ["検索文書: " + c for c in contents]
+                embeddings = self.encoder.encode(contents)
+                if self.distance_metric == 'cosine':
+                    faiss.normalize_L2(embeddings)
                 ids = np.array([r[0] for r in rows])
                 self.index.add_with_ids(np.array(embeddings).astype('float32'), ids)
 
@@ -155,22 +176,31 @@ class ACE_Memory:
             )
             doc_id = cursor.lastrowid
 
-        vector = self.encoder.encode([content])
+        # Encode with prefix if needed
+        encoded_content = "検索文書: " + content if self.use_prefixes else content
+        vector = self.encoder.encode([encoded_content])
         with FileLock(self.index_lock_path):
             # Read fresh, add, write
             if os.path.exists(self.index_path):
                 try:
                     self.index = faiss.read_index(self.index_path)
                 except Exception:
-                    self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
+                    if self.distance_metric == 'cosine':
+                        self.index = faiss.IndexIDMap(faiss.IndexFlatIP(self.dimension))
+                    else:
+                        self.index = faiss.IndexIDMap(faiss.IndexFlatL2(self.dimension))
             
+            if self.distance_metric == 'cosine':
+                faiss.normalize_L2(vector)
             self.index.add_with_ids(np.array(vector).astype('float32'), np.array([doc_id]))
             faiss.write_index(self.index, self.index_path)
             self.last_index_mtime = os.path.getmtime(self.index_path)
     
     def find_similar_vectors(self, content: str, threshold: float = 0.3) -> List[Tuple[int, float]]:
         """Find similar documents based on vector distance."""
-        vector = self.encoder.encode([content])
+        # Encode with query prefix if needed
+        encoded_content = "検索クエリ: " + content if self.use_prefixes else content
+        vector = self.encoder.encode([encoded_content])
         
         with FileLock(self.index_lock_path):
             if os.path.exists(self.index_path):
@@ -190,8 +220,14 @@ class ACE_Memory:
                 for i in range(len(I[0])):
                     idx = I[0][i]
                     dist = D[0][i]
-                    if idx >= 0 and dist < threshold:
-                        results.append((int(idx), float(dist)))
+                    if idx >= 0:
+                        # For IP (cosine), distance is similarity, so we want dist > threshold
+                        if self.distance_metric == 'cosine':
+                            if dist > threshold:
+                                results.append((int(idx), float(dist)))
+                        else:
+                            if dist < threshold:
+                                results.append((int(idx), float(dist)))
                 return results
         return []
 
@@ -216,7 +252,9 @@ class ACE_Memory:
         # FAISS IndexIDMap doesn't support simple update. We must remove and add.
         # However, remove_ids requires a selector.
         
-        vector = self.encoder.encode([content])
+        # Encode with prefix if needed
+        encoded_content = "検索文書: " + content if self.use_prefixes else content
+        vector = self.encoder.encode([encoded_content])
         
         with FileLock(self.index_lock_path):
             if os.path.exists(self.index_path):
@@ -226,6 +264,8 @@ class ACE_Memory:
             self.index.remove_ids(np.array([doc_id]).astype('int64'))
             
             # Add new vector
+            if self.distance_metric == 'cosine':
+                faiss.normalize_L2(vector)
             self.index.add_with_ids(np.array(vector).astype('float32'), np.array([doc_id]))
             
             faiss.write_index(self.index, self.index_path)
@@ -256,16 +296,23 @@ class ACE_Memory:
         results = {}
         # 1. Vector Search with relevance filtering
         if self.index.ntotal > 0:
-            query_vec = self.encoder.encode([query])
+            # Encode with query prefix if needed
+            encoded_query = "検索クエリ: " + query if self.use_prefixes else query
+            query_vec = self.encoder.encode([encoded_query])
             # Search for more candidates to allow for filtering
             search_k = min(k * 3, self.index.ntotal)  
             D, I = self.index.search(np.array(query_vec).astype('float32'), search_k)
             
-            # Filter by distance threshold
+            # Filter by distance/similarity threshold
             found_ids = []
             for distance, idx in zip(D[0], I[0]):
-                if idx >= 0 and distance < distance_threshold:
-                    found_ids.append(int(idx))
+                if idx >= 0:
+                    if self.distance_metric == 'cosine':
+                        if distance > distance_threshold:
+                            found_ids.append(int(idx))
+                    else:
+                        if distance < distance_threshold:
+                            found_ids.append(int(idx))
             
             # Limit to k results after filtering
             found_ids = found_ids[:k]
@@ -386,7 +433,10 @@ class BackgroundWorker(threading.Thread):
         user_input = task['user_input']
         agent_output = task['agent_output']
 
+        lang_instruction = "出力は必ず日本語（Japanese）で行ってください。" if os.environ.get("ACE_LANG") == "ja" else "Ensure the output is in English."
         prompt = prompts.ANALYSIS_PROMPT.format(user_input=user_input, agent_output=agent_output)
+        if "Output JSON only:" in prompt:
+            prompt = prompt.replace("Output JSON only:", f"{lang_instruction}\nOutput JSON only:")
         
         try:
             res = call_llm_with_retry(self.llm, [HumanMessage(content=prompt)]).content.strip()
@@ -421,11 +471,14 @@ class BackgroundWorker(threading.Thread):
                         existing_content = existing_doc['content']
                         print(f"[BackgroundWorker] Similar doc found (ID {best_match_id}, dist={best_dist:.3f}). Running Synthesizer...", flush=True)
                         
+                        lang_instruction = "出力は必ず日本語（Japanese）で行ってください。" if os.environ.get("ACE_LANG") == "ja" else "Ensure the output is in English."
                         synthesizer_prompt = prompts.SYNTHESIZER_PROMPT.format(
                             best_match_id=best_match_id,
                             existing_content=existing_content,
                             new_content=new_content
                         )
+                        if "Output JSON only:" in synthesizer_prompt:
+                            synthesizer_prompt = synthesizer_prompt.replace("Output JSON only:", f"{lang_instruction}\nOutput JSON only:")
                         
                         try:
                             syn_res = call_llm_with_retry(self.llm, [HumanMessage(content=synthesizer_prompt)]).content.strip()
