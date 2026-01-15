@@ -145,22 +145,30 @@ uv sync
 
 ### Environment Configuration
 
-Create a `.env` file in the root directory:
+Create a `.env` file in the root directory (see `.env.example` for a template):
 
 ```env
-# Required: Compatible OpenAI API Key (e.g., Sakura, OpenAI, Azure)
-SAKURA_API_KEY=your_api_key_here
+# --- LLM Settings ---
+LLM_MODEL=gpt-oss-120b
+LLM_API_KEY=your_api_key_here
+LLM_BASE_URL=https://api.ai.sakura.ad.jp/v1/
+LLM_TEMPERATURE=0.0
 
-# Optional: Long-Term Memory (LTM) Mode
-# Controls how the agent's memory is managed in a multi-user environment.
-# - "isolated": Each user session gets a private, independent memory. This is recommended for most use cases to ensure data privacy.
-# - "shared" (Default): All users interact with a single, global memory. The agent learns collectively from all interactions.
+# --- Multi-language Settings ---
+# "ja" for Japanese, "en" for English
+ACE_LANG=ja
+
+# --- Embedding Settings ---
+# cl-nagoya/ruri-v3-30m is optimized for Japanese retrieval
+ACE_EMBEDDING_MODEL=cl-nagoya/ruri-v3-30m
+ACE_EMBEDDING_DIMENSION=256
+ACE_DISTANCE_METRIC=cosine
+ACE_DISTANCE_THRESHOLD=0.7
+
+# --- Multi-user Settings ---
+# "shared" (Default): All users interact with a single, global memory.
+# "isolated": Each user session gets a private, independent memory.
 LTM_MODE=shared
-
-# Optional: Retrieval Distance Threshold
-# Controls strictness of vector search. Lower = stricter, Higher = more tolerant.
-# Default: 1.8 (Good balance)
-ACE_DISTANCE_THRESHOLD=1.8
 ```
 
 ## 🖥️ Usage

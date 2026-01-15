@@ -205,12 +205,21 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
                 reflector_status = gr.Textbox(label="Background Processing", interactive=False)
             with gr.Group():
                 gr.Markdown("#### Search Settings")
+                # Determine slider range based on distance metric
+                distance_metric = os.environ.get('ACE_DISTANCE_METRIC', 'l2').lower()
+                is_cosine = (distance_metric == 'cosine')
+                
+                initial_threshold = float(os.environ.get('ACE_DISTANCE_THRESHOLD', '0.7' if is_cosine else '1.8'))
+                slider_min = 0.0 if is_cosine else 1.0
+                slider_max = 1.0 if is_cosine else 3.0
+                slider_step = 0.05 if is_cosine else 0.1
+
                 distance_slider = gr.Slider(
-                    minimum=1.0, maximum=3.0, value=1.8, step=0.1,
-                    label="Distance Threshold (lower = stricter)",
-                    info="Adjust search relevance filtering"
+                    minimum=slider_min, maximum=slider_max, value=initial_threshold, step=slider_step,
+                    label=f"Distance Threshold ({distance_metric})",
+                    info="Lower = stricter (Cosine: higher similarity, L2: smaller distance)" if not is_cosine else "Higher = stricter (Similarity score)"
                 )
-                gr.Markdown("*Lower values return only highly relevant results*")
+                gr.Markdown("*Adjust relevance filtering criteria*")
 
     with gr.Row():
         with gr.Column():
