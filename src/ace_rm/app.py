@@ -7,7 +7,7 @@ from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage, AIMessage
 from ace_rm.ace_framework import (
-    build_ace_agent, ACE_Memory, BackgroundWorker,
+    build_ace_agent, ACE_Memory, TaskQueue, BackgroundWorker,
     MODEL_NAME, BASE_URL, OPENAI_API_KEY, LLM_TEMPERATURE
 )
 from langchain_openai import ChatOpenAI
@@ -33,14 +33,16 @@ if LTM_MODE == "shared":
     )
     # No session_id provided for a shared memory
     shared_memory = ACE_Memory()
-    shared_ace_app = build_ace_agent(llm, shared_memory)
+    shared_queue = TaskQueue()
+    shared_ace_app = build_ace_agent(llm, shared_memory, shared_queue)
 
-    # One worker for the shared memory
-    shared_worker = BackgroundWorker(llm=llm)
+    # shared worker now gets explicit memory/queue instances
+    shared_worker = BackgroundWorker(llm=llm, memory=shared_memory, task_queue=shared_queue)
     shared_worker.start()
 
     shared_agent = {
         "memory": shared_memory,
+        "queue": shared_queue,
         "app": shared_ace_app,
         "worker": shared_worker
     }
@@ -62,12 +64,14 @@ def get_session_agent(session_id: str):
             temperature=LLM_TEMPERATURE
         )
         memory_instance = ACE_Memory(session_id=session_id)
-        ace_app_instance = build_ace_agent(llm, memory_instance)
-        worker_instance = BackgroundWorker(llm=llm, memory_session_id=session_id)
+        queue_instance = TaskQueue(session_id=session_id)
+        ace_app_instance = build_ace_agent(llm, memory_instance, queue_instance)
+        worker_instance = BackgroundWorker(llm=llm, memory=memory_instance, task_queue=queue_instance)
         worker_instance.start()
 
         agent_sessions[session_id] = {
             "memory": memory_instance,
+            "queue": queue_instance,
             "app": ace_app_instance,
             "worker": worker_instance
         }
@@ -118,7 +122,7 @@ def process_chat(user_message: str, history: list, session_id: str):
     context_str = "\n---\n".join(context_list) if context_list else "No context retrieved."
     
     new_memory_df = get_memory_df(session_agent["memory"])
-    new_task_df = get_task_df(session_agent["memory"])
+    new_task_df = get_task_df(session_agent["queue"])
 
     # Build new history in Gradio 6.x format
     new_history = history + [
@@ -127,7 +131,7 @@ def process_chat(user_message: str, history: list, session_id: str):
     ]
 
     # Get meaningful status about background processing and LTM updates
-    all_tasks = session_agent["memory"].get_tasks()
+    all_tasks = session_agent["queue"].get_tasks()
     pending_count = len([t for t in all_tasks if t['status'] in ['pending', 'processing']])
     recent_done = [t for t in all_tasks if t['status'] == 'done'][:3]  # Last 3 completed
     recent_failed = [t for t in all_tasks if t['status'] == 'failed'][:1]  # Last failure
@@ -162,8 +166,8 @@ def get_memory_df(memory_instance: ACE_Memory):
         return pd.DataFrame(columns=["id", "content", "entities", "problem_class", "timestamp"])
     return pd.DataFrame(data)
 
-def get_task_df(memory_instance: ACE_Memory):
-    data = memory_instance.get_tasks()
+def get_task_df(queue_instance: TaskQueue):
+    data = queue_instance.get_tasks()
     if not data:
         return pd.DataFrame(columns=["id", "user_input", "status", "created_at", "updated_at", "error_msg"])
     return pd.DataFrame(data)
@@ -171,6 +175,7 @@ def get_task_df(memory_instance: ACE_Memory):
 def reset_memory_handler(session_id: str):
     session_agent = get_session_agent(session_id)
     session_agent["memory"].clear()
+    session_agent["queue"].clear()
     return get_memory_df(session_agent["memory"])
 
 def apply_distance_threshold(session_id: str, threshold: float):
@@ -246,11 +251,11 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
     def on_load(session_id_str: str):
         print(f"UI loaded for session: {session_id_str}", flush=True)
         session_agent = get_session_agent(session_id_str)
-        return get_memory_df(session_agent["memory"]), get_task_df(session_agent["memory"])
+        return get_memory_df(session_agent["memory"]), get_task_df(session_agent["queue"])
 
     def refresh_ui_state(session_id_str: str):
         session_agent = get_session_agent(session_id_str)
-        return get_memory_df(session_agent["memory"]), get_task_df(session_agent["memory"])
+        return get_memory_df(session_agent["memory"]), get_task_df(session_agent["queue"])
 
     submit_btn.click(
         process_chat,
