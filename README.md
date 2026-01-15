@@ -145,7 +145,7 @@ uv sync
 
 ### Environment Configuration
 
-Create a `.env` file in the root directory (see `.env.example` for a template):
+Create a `.env` file in the root directory (see `.env.example` for a template). All configuration is centrally managed in `src/ace_rm/config.py`.
 
 ```env
 # --- LLM Settings ---
@@ -161,7 +161,6 @@ ACE_LANG=ja
 # --- Embedding Settings ---
 # cl-nagoya/ruri-v3-30m is optimized for Japanese retrieval
 ACE_EMBEDDING_MODEL=cl-nagoya/ruri-v3-30m
-ACE_EMBEDDING_DIMENSION=256
 ACE_DISTANCE_METRIC=cosine
 ACE_DISTANCE_THRESHOLD=0.7
 
@@ -169,11 +168,6 @@ ACE_DISTANCE_THRESHOLD=0.7
 # "shared" (Default): All users interact with a single, global memory.
 # "isolated": Each user session gets a private, independent memory.
 LTM_MODE=shared
-
-# --- Advanced Settings ---
-# distance metric: "l2" or "cosine"
-ACE_DISTANCE_METRIC=cosine
-ACE_DISTANCE_THRESHOLD=0.7
 ```
 
 ## ⚡ Optimization & Scalability
@@ -244,7 +238,9 @@ ace_rm/
 │   ├── agent/            # LangGraph agent definitions & nodes
 │   ├── workers/          # Background processing (BackgroundWorker)
 │   ├── prompts/          # Externalized system prompts (multilingual)
-│   ├── ace_framework.py  # Facade module (Unified interface)
+│   ├── utils/            # Shared utilities (Embedding model manager)
+│   ├── config.py         # Centralized configuration management
+│   ├── ace_framework.py  # Facade module (Unified interface for compatibility)
 │   └── app.py            # Gradio UI application
 ├── tests/
 │   ├── manual_test_memory_flow.py 
