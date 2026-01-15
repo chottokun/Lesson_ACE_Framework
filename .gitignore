@@ -215,3 +215,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# DB
+*.db-shm
+*.db-wal
+*.db
+*.faiss
+*.lock
+*.index
+ace_memory.db_idx_None.index
