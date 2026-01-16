@@ -1,28 +1,35 @@
 # English Prompt Templates
 
-ANALYSIS_PROMPT = """
-Analyze this interaction. Extract Structural Knowledge (MFR) and General Principles.
 
-1. **Specific Analysis**: If a problem is presented, define:
-   - Entities, State Variables, Actions, Constraints.
-   - Summary of the solution.
+UNIFIED_ANALYSIS_PROMPT = """
+Analyze this interaction and determine if it should be stored or updated in the knowledge base.
+Ensure the output is in English.
 
-2. **Abstraction & Generalization**:
-   - Abstract the specific details into a general pattern or rule.
-   - Identify the underlying problem class (e.g., "Constraint Satisfaction", "Resource Allocation").
-   - Define a general strategy derived from this instance.
+1. **Analysis Phase**:
+   Extract significant structural knowledge (entities, rules, processes) from the interaction.
+   Identify not just specific details but also abstract problem classes.
+
+2. **Synthesis Decision Phase**:
+   Compare the extracted knowledge with "Similar Existing Knowledge" and decide on an action.
 
 User: {user_input}
 AI: {agent_output}
 
+Similar Existing Knowledge:
+{existing_docs}
+
 Output JSON only:
 {{
-    "analysis": "**Specific Model**:\\n[Details...]\\n\\n**Generalization**:\\n[Details...]",
-    "entities": ["list", "of", "key", "entities"],
-    "problem_class": "Identified Problem Class",
-    "should_store": true/false
+    "should_store": true/false, // Is it valuable as knowledge?
+    "action": "NEW" | "UPDATE" | "KEPT", // Action (only valid if should_store=true)
+    "target_doc_id": null | <integer_id>, // Target ID if UPDATE
+    "analysis": "**Specific Model**:\\n[...]\\n\\n**Generalization**:\\n[...]", // Content for NEW or UPDATE
+    "entities": ["entity1", "entity2"],
+    "problem_class": "problem_class",
+    "rationale": "Reason for decision"
 }}
 """
+
 
 SYNTHESIZER_PROMPT = """
 You are the "Knowledge Synthesizer" for an AI memory system.
