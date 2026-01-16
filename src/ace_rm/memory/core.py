@@ -265,14 +265,24 @@ class ACE_Memory:
         return list(results.values())
     
     def clear(self):
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
-        if os.path.exists(self.index_path):
-            os.remove(self.index_path)
-        if os.path.exists(self.index_lock_path):
-            try: os.remove(self.index_lock_path)
-            except OSError: pass
-        self.__init__(session_id=self.session_id)
+        # 1. Clear SQL tables
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM documents")
+            # FTS table content will be handled by the delete triggers automatically
+        
+        # 2. VACUUM must be run outside of a transaction (autocommit mode)
+        conn = sqlite3.connect(self.db_path, isolation_level=None)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+        
+        # 3. Reset FAISS index
+        with FileLock(self.index_lock_path):
+            self._create_empty_index()
+            faiss.write_index(self.index, self.index_path)
+            if os.path.exists(self.index_path):
+                self.last_index_mtime = os.path.getmtime(self.index_path)
 
     def get_all(self) -> List[Dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:

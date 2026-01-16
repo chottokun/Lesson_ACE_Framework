@@ -172,7 +172,7 @@ def reset_memory_handler(session_id: str):
     session_agent = get_session_agent(session_id)
     session_agent["memory"].clear()
     session_agent["queue"].clear()
-    return get_memory_df(session_agent["memory"])
+    return get_memory_df(session_agent["memory"]), get_task_df(session_agent["queue"])
 
 def apply_distance_threshold(session_id: str, threshold: float):
     """Apply new distance threshold to the memory instance"""
@@ -266,7 +266,7 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     refresh_mem_btn.click(refresh_ui_state, inputs=[session_id], outputs=[memory_table, task_table])
-    reset_mem_btn.click(reset_memory_handler, inputs=[session_id], outputs=[memory_table])
+    reset_mem_btn.click(reset_memory_handler, inputs=[session_id], outputs=[memory_table, task_table])
     
     # Distance threshold control
     threshold_status = gr.Textbox(visible=False)  # Hidden status indicator

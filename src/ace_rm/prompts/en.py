@@ -77,3 +77,32 @@ Output JSON only:
 """
 
 RETRIEVED_CONTEXT_TEMPLATE = "--- Retrieved Context ---\n{context_str}\n-----------------------"
+
+
+LTM_KNOWLEDGE_MODEL_PROMPT = """
+Analyze the following information and extract the minimal structural model essential for reasoning.
+Use bullet points with symbolic expressions (max 30 chars per line).
+
+---
+Context:
+{context}
+---
+
+## Entities
+Identify only persistent objects.
+- e.g.: User, Session, Config
+
+## State Variables
+Dynamic properties to track changes.
+- e.g.: is_authenticated: bool
+
+## Actions
+Operations with "preconditions" → "effects".
+- e.g.: login(creds) → session created
+
+## Constraints
+Invariant boundary conditions that must not be violated.
+- e.g.: session_ttl <= 24h
+
+Note: Output only the "blueprint" of the problem, not solutions.
+"""
