@@ -1,22 +1,18 @@
 import gradio as gr
 import pandas as pd
-from dotenv import load_dotenv
 import uuid
 import os
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage, AIMessage
 from ace_rm.ace_framework import (
-    build_ace_agent, ACE_Memory, TaskQueue, BackgroundWorker,
-    MODEL_NAME, BASE_URL, OPENAI_API_KEY, LLM_TEMPERATURE
+    build_ace_agent, ACE_Memory, TaskQueue, BackgroundWorker
+)
+from ace_rm.config import (
+    MODEL_NAME, BASE_URL, OPENAI_API_KEY, LLM_TEMPERATURE, LTM_MODE
 )
 from langchain_openai import ChatOpenAI
 
-# Load environment variables
-load_dotenv()
-
-# --- Mode Configuration ---
-LTM_MODE = os.getenv("LTM_MODE", "shared").lower()  # "isolated" or "shared"
 print(f"Running in LTM_MODE: {LTM_MODE}", flush=True)
 
 # --- Global/Session-based Initialization ---
@@ -157,7 +153,7 @@ def process_chat(user_message: str, history: list, session_id: str):
 
     return (
         new_history, entities_str, context_str,
-        ltm_status, reflector_status, new_memory_df, new_task_df
+        ltm_status, reflector_status, memory_df if not user_message else new_memory_df, new_task_df
     )
 
 def get_memory_df(memory_instance: ACE_Memory):
@@ -300,4 +296,3 @@ if __name__ == "__main__":
         print("Stopping shared worker...", flush=True)
         shared_agent["worker"].stop()
         shared_agent["worker"].join()
-    

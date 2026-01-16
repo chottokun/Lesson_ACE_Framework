@@ -145,7 +145,7 @@ uv sync
 
 ### Environment Configuration
 
-Create a `.env` file in the root directory (see `.env.example` for a template):
+Create a `.env` file in the root directory (see `.env.example` for a template). All configuration is centrally managed in `src/ace_rm/config.py`.
 
 ```env
 # --- LLM Settings ---
@@ -161,19 +161,14 @@ ACE_LANG=ja
 # --- Embedding Settings ---
 # cl-nagoya/ruri-v3-30m is optimized for Japanese retrieval
 ACE_EMBEDDING_MODEL=cl-nagoya/ruri-v3-30m
-ACE_EMBEDDING_DIMENSION=256
 ACE_DISTANCE_METRIC=cosine
 ACE_DISTANCE_THRESHOLD=0.7
+ACE_DEVICE=cpu # Optional: cpu or cuda (default: auto-detection)
 
 # --- Multi-user Settings ---
 # "shared" (Default): All users interact with a single, global memory.
 # "isolated": Each user session gets a private, independent memory.
 LTM_MODE=shared
-
-# --- Advanced Settings ---
-# distance metric: "l2" or "cosine"
-ACE_DISTANCE_METRIC=cosine
-ACE_DISTANCE_THRESHOLD=0.7
 ```
 
 ## ⚡ Optimization & Scalability
@@ -182,7 +177,7 @@ The framework has been refactored for high-performance and future-proof scalabil
 
 -   **Batch Insertion (30x Speedup)**: Implemented `add_batch` logic. Bulk memory operations are now processed in a single transaction/FAISS update, reducing insertion time from 31ms to ~1ms per document.
 -   **Resource Sharing**: Optimized `BackgroundWorker` to share a single `SentenceTransformer` instance with the Agent. This results in **50% less RAM usage** during concurrent operation.
--   **Vector DB Hardware Acceleration**: FAISS automatically utilizes GPU (CUDA) if available for embedding and indexing operations.
+-   **Vector DB Hardware Acceleration**: FAISS automatically utilizes GPU (CUDA) if available for indexing. The embedding model device can be explicitly set via `ACE_DEVICE` in `.env`.
 -   **ChromaDB Readiness**: The modular split between `ACE_Memory` and `TaskQueue` allows swapping the vector backend to ChromaDB without affecting the background processing logic.
 
 ## 🖥️ Usage
@@ -244,7 +239,9 @@ ace_rm/
 │   ├── agent/            # LangGraph agent definitions & nodes
 │   ├── workers/          # Background processing (BackgroundWorker)
 │   ├── prompts/          # Externalized system prompts (multilingual)
-│   ├── ace_framework.py  # Facade module (Unified interface)
+│   ├── utils/            # Shared utilities (Embedding model manager)
+│   ├── config.py         # Centralized configuration management
+│   ├── ace_framework.py  # Facade module (Unified interface for compatibility)
 │   └── app.py            # Gradio UI application
 ├── tests/
 │   ├── manual_test_memory_flow.py 

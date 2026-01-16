@@ -43,75 +43,71 @@ class BackgroundWorker(threading.Thread):
 
         user_input = task['user_input']
         agent_output = task['agent_output']
+        
+        # 0. Quick Filter (Rule-based)
+        # Skip trivial interactions like greetings if needed (Already handled by Curator fast-path somewhat, 
+        # but good to have here too if direct insertion is tried)
+        # For now, we proceed to Unified Analysis.
 
-        lang_instruction = "出力は必ず日本語（Japanese）で行ってください。" if os.environ.get("ACE_LANG") == "ja" else "Ensure the output is in English."
-        prompt = prompts.ANALYSIS_PROMPT.format(user_input=user_input, agent_output=agent_output)
-        if "Output JSON only:" in prompt:
-            prompt = prompt.replace("Output JSON only:", f"{lang_instruction}\nOutput JSON only:")
+        # 1. Pre-search for existing context using raw input
+        # We use the user input and part of agent output as query
+        search_query = f"{user_input}\n{agent_output[:200]}"
+        similar_docs = self.memory.find_similar_vectors(search_query, threshold=0.4) # Slightly loose threshold to find candidates
+        
+        existing_docs_str = "None"
+        if similar_docs:
+            docs_content = []
+            for doc_id, _ in similar_docs[:3]: # Top 3 candidates
+                doc = self.memory.get_document_by_id(doc_id)
+                if doc:
+                    docs_content.append(f"ID: {doc['id']}\nContent: {doc['content']}")
+            if docs_content:
+                existing_docs_str = "\n---\n".join(docs_content)
+
+        # 2. Unified Analysis & Synthesis (Single LLM Call)
+        # Determine language for prompt
+        is_jp = os.environ.get("ACE_LANG") == "ja"
+        prompt_tmpl = prompts.UNIFIED_ANALYSIS_PROMPT if is_jp else prompts.UNIFIED_ANALYSIS_PROMPT_EN  # Assuming en.py has UNIFIED.. too, or fallback
+        # Fallback if UNIFIED_ANALYSIS_PROMPT_EN is not available in prompts module (it should be)
+        if not hasattr(prompts, 'UNIFIED_ANALYSIS_PROMPT_EN'):
+             # If strictly separated by files, we might need import adjustment. 
+             # For now, we assume prompts.__init__ handles or we use the textual prompts directly.
+             pass
+
+        prompt = prompt_tmpl.format(
+            user_input=user_input, 
+            agent_output=agent_output,
+            existing_docs=existing_docs_str
+        )
         
         try:
-            # We assume call_llm_with_retry is available or we can use llm.invoke
             res = self.llm.invoke([HumanMessage(content=prompt)]).content.strip()
             if "```json" in res: res = res.split("```json")[1].split("```")[0]
             elif "```" in res: res = res.split("```")[1].split("```")[0]
             
             data = json.loads(res)
             
-            if data.get('should_store', False):
+            should_store = data.get('should_store', False)
+            if should_store:
+                action = data.get('action', 'NEW').upper()
+                target_doc_id = data.get('target_doc_id')
                 new_content = data.get('analysis', '')
                 new_entities = data.get('entities', [])
                 new_p_class = data.get('problem_class', '')
 
-                similar_docs = self.memory.find_similar_vectors(new_content, threshold=0.5)
-                
-                action = "NEW"
-                target_doc_id = None
-                final_content = new_content
-                final_entities = new_entities
-                final_p_class = new_p_class
-
-                if similar_docs:
-                    best_match_id, best_dist = similar_docs[0]
-                    existing_doc = self.memory.get_document_by_id(best_match_id)
-                    
-                    if existing_doc:
-                        existing_content = existing_doc['content']
-                        synthesizer_prompt = prompts.SYNTHESIZER_PROMPT.format(
-                            best_match_id=best_match_id,
-                            existing_content=existing_content,
-                            new_content=new_content
-                        )
-                        if "Output JSON only:" in synthesizer_prompt:
-                            synthesizer_prompt = synthesizer_prompt.replace("Output JSON only:", f"{lang_instruction}\nOutput JSON only:")
-                        
-                        try:
-                            syn_res = self.llm.invoke([HumanMessage(content=synthesizer_prompt)]).content.strip()
-                            if "```json" in syn_res: syn_res = syn_res.split("```json")[1].split("```")[0]
-                            elif "```" in syn_res: syn_res = syn_res.split("```")[1].split("```")[0]
-                            
-                            syn_data = json.loads(syn_res)
-                            action = syn_data.get('action', 'NEW').upper()
-                            if action == 'UPDATE':
-                                target_doc_id = best_match_id
-                                final_content = syn_data.get('synthesized_content', new_content)
-                                llm_entities = syn_data.get('merged_entities')
-                                if llm_entities:
-                                    final_entities = llm_entities
-                                else:
-                                    exist_entities = json.loads(existing_doc['entities'])
-                                    final_entities = list(set(exist_entities + new_entities))
-                        except Exception as e:
-                            print(f"[BackgroundWorker] Synthesizer Error: {e}. Defaulting to NEW.")
-                
-                if action == "UPDATE" and target_doc_id is not None:
-                    self.memory.update_document(target_doc_id, final_content, final_entities, final_p_class)
-                elif action == "KEPT":
-                    pass
-                else:
-                    self.memory.add(final_content, final_entities, final_p_class)
+                if action == 'UPDATE' and target_doc_id is not None:
+                    print(f"[BackgroundWorker] Updating Doc {target_doc_id}", flush=True)
+                    self.memory.update_document(target_doc_id, new_content, new_entities, new_p_class)
+                elif action == 'KEPT':
+                    print("[BackgroundWorker] Knowledge kept (redundant).", flush=True)
+                else: # NEW
+                    print("[BackgroundWorker] Adding NEW Doc", flush=True)
+                    self.memory.add(new_content, new_entities, new_p_class)
+            else:
+                 print("[BackgroundWorker] Ignored (should_store=False).", flush=True)
             
             self.task_queue.mark_task_complete(task_id)
 
         except Exception as e:
-            print(f"[BackgroundWorker] Task {task_id} Failed: {e}")
+            print(f"[BackgroundWorker] Task {task_id} Failed: {e}", flush=True)
             self.task_queue.mark_task_failed(task_id, str(e))

@@ -4,13 +4,12 @@ import json
 import numpy as np
 import faiss
 from typing import List, Optional, Tuple, Dict, Any
-from sentence_transformers import SentenceTransformer
 from filelock import FileLock
 
-# We'll import constants from the facade to avoid circular imports if they remain there,
-# or we can define defaults here and let them be overridden.
-# For now, let's assume they are passed or loaded from env here.
-DB_PATH = os.environ.get("ACE_DB_PATH", "ace_memory.db")
+from ace_rm.config import (
+    DB_PATH, FAISS_INDEX_PATH, DISTANCE_METRIC, DISTANCE_THRESHOLD, EMBEDDING_MODEL_NAME
+)
+from ace_rm.utils.embedding_manager import get_embedding_model
 
 class ACE_Memory:
     def __init__(self, session_id: Optional[str] = None):
@@ -23,21 +22,18 @@ class ACE_Memory:
             self.index_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.faiss")
         else:
             self.db_path = DB_PATH
-            self.index_path = f"{DB_PATH}_idx_{self.session_id}.index"
+            self.index_path = FAISS_INDEX_PATH
         
         self.index_lock_path = f"{self.index_path}.lock"
         self.last_index_mtime = 0.0
 
-        self.distance_metric = os.environ.get('ACE_DISTANCE_METRIC', 'l2').lower()
-        default_threshold = 0.7 if self.distance_metric == 'cosine' else 1.8
-        self.distance_threshold = float(os.environ.get('ACE_DISTANCE_THRESHOLD', str(default_threshold)))
+        self.distance_metric = DISTANCE_METRIC
+        self.distance_threshold = DISTANCE_THRESHOLD
 
-        self.encoder_name = os.environ.get('ACE_EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
-        self.dimension = int(os.environ.get('ACE_EMBEDDING_DIMENSION', '384'))
-        
-        import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.encoder = SentenceTransformer(self.encoder_name, device=device)
+        self.encoder_name = EMBEDDING_MODEL_NAME
+        # Use shared embedding model
+        self.encoder = get_embedding_model()
+        self.dimension = self.encoder.get_sentence_embedding_dimension()
         self.use_prefixes = "ruri" in self.encoder_name.lower()
 
         self._init_db()

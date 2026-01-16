@@ -2,7 +2,7 @@ import os
 import sqlite3
 from typing import List, Optional, Dict, Any
 
-DB_PATH = os.environ.get("ACE_DB_PATH", "ace_memory.db")
+from ace_rm.config import DB_PATH
 
 class TaskQueue:
     def __init__(self, session_id: Optional[str] = None):
