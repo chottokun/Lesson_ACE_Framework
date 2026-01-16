@@ -7,7 +7,7 @@ import threading
 from typing import Optional
 from sentence_transformers import SentenceTransformer
 
-from ace_rm.config import EMBEDDING_MODEL_NAME
+from ace_rm.config import EMBEDDING_MODEL_NAME, ACE_DEVICE
 
 _model: Optional[SentenceTransformer] = None
 _lock = threading.Lock()
@@ -23,5 +23,5 @@ def get_embedding_model() -> SentenceTransformer:
         with _lock:
             # Double-check locking pattern
             if _model is None:
-                _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+                _model = SentenceTransformer(EMBEDDING_MODEL_NAME, device=ACE_DEVICE)
     return _model

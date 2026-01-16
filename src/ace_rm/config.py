@@ -20,6 +20,7 @@ OPENAI_API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("SAKURA_API_KEY
 
 # --- Embedding Model Configuration ---
 EMBEDDING_MODEL_NAME = os.environ.get("ACE_EMBEDDING_MODEL", "cl-nagoya/ruri-v3-30m")
+ACE_DEVICE = os.environ.get("ACE_DEVICE")  # Default is None for auto-detection
 
 # --- Search Configuration ---
 DISTANCE_METRIC = os.environ.get("ACE_DISTANCE_METRIC", "l2").lower()

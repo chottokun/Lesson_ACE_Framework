@@ -163,6 +163,7 @@ ACE_LANG=ja
 ACE_EMBEDDING_MODEL=cl-nagoya/ruri-v3-30m
 ACE_DISTANCE_METRIC=cosine
 ACE_DISTANCE_THRESHOLD=0.7
+ACE_DEVICE=cpu # Optional: cpu or cuda (default: auto-detection)
 
 # --- Multi-user Settings ---
 # "shared" (Default): All users interact with a single, global memory.
@@ -176,7 +177,7 @@ The framework has been refactored for high-performance and future-proof scalabil
 
 -   **Batch Insertion (30x Speedup)**: Implemented `add_batch` logic. Bulk memory operations are now processed in a single transaction/FAISS update, reducing insertion time from 31ms to ~1ms per document.
 -   **Resource Sharing**: Optimized `BackgroundWorker` to share a single `SentenceTransformer` instance with the Agent. This results in **50% less RAM usage** during concurrent operation.
--   **Vector DB Hardware Acceleration**: FAISS automatically utilizes GPU (CUDA) if available for embedding and indexing operations.
+-   **Vector DB Hardware Acceleration**: FAISS automatically utilizes GPU (CUDA) if available for indexing. The embedding model device can be explicitly set via `ACE_DEVICE` in `.env`.
 -   **ChromaDB Readiness**: The modular split between `ACE_Memory` and `TaskQueue` allows swapping the vector backend to ChromaDB without affecting the background processing logic.
 
 ## 🖥️ Usage

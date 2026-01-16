@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple, Dict, Any
 from filelock import FileLock
 
 from ace_rm.config import (
-    DB_PATH, DISTANCE_METRIC, DISTANCE_THRESHOLD, EMBEDDING_MODEL_NAME
+    DB_PATH, FAISS_INDEX_PATH, DISTANCE_METRIC, DISTANCE_THRESHOLD, EMBEDDING_MODEL_NAME
 )
 from ace_rm.utils.embedding_manager import get_embedding_model
 
@@ -22,7 +22,7 @@ class ACE_Memory:
             self.index_path = os.path.join(data_dir, f"ace_memory_{self.session_id}.faiss")
         else:
             self.db_path = DB_PATH
-            self.index_path = f"{DB_PATH}_idx_{self.session_id}.index"
+            self.index_path = FAISS_INDEX_PATH
         
         self.index_lock_path = f"{self.index_path}.lock"
         self.last_index_mtime = 0.0
