@@ -82,9 +82,10 @@ def process_chat(user_message: str, history: list, session_id: str):
     ace_app = session_agent["app"]
 
     if not user_message:
-        # On empty input, just refresh the memory view
+        # On empty input, just refresh the memory and task views
         memory_df = get_memory_df(session_agent["memory"])
-        return history, "", "", "", "", memory_df
+        task_df = get_task_df(session_agent["queue"])
+        return history, "", "", "", "", memory_df, task_df
 
     # Gradio 6.x history is often a list of dictionaries [{'role': 'user', 'content': '...'}, ...]
     # or the previous list of tuples format. We handle both to be safe.

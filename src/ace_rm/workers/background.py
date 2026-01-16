@@ -65,14 +65,8 @@ class BackgroundWorker(threading.Thread):
                 existing_docs_str = "\n---\n".join(docs_content)
 
         # 2. Unified Analysis & Synthesis (Single LLM Call)
-        # Determine language for prompt
-        is_jp = os.environ.get("ACE_LANG") == "ja"
-        prompt_tmpl = prompts.UNIFIED_ANALYSIS_PROMPT if is_jp else prompts.UNIFIED_ANALYSIS_PROMPT_EN  # Assuming en.py has UNIFIED.. too, or fallback
-        # Fallback if UNIFIED_ANALYSIS_PROMPT_EN is not available in prompts module (it should be)
-        if not hasattr(prompts, 'UNIFIED_ANALYSIS_PROMPT_EN'):
-             # If strictly separated by files, we might need import adjustment. 
-             # For now, we assume prompts.__init__ handles or we use the textual prompts directly.
-             pass
+        # The prompts module already handles language selection based on ACE_LANG
+        prompt_tmpl = prompts.UNIFIED_ANALYSIS_PROMPT
 
         prompt = prompt_tmpl.format(
             user_input=user_input, 
@@ -105,8 +99,9 @@ class BackgroundWorker(threading.Thread):
             try:
                 data = json.loads(res)
             except json.JSONDecodeError as je:
-                print(f"[BackgroundWorker] Task {task_id}: JSON parse error: {je}. Response was: {res[:100]}...", flush=True)
-                self.task_queue.mark_task_complete(task_id)  # Complete instead of fail to avoid retry loops
+                error_msg = f"JSON parse error: {je}. Response was: {res[:100]}..."
+                print(f"[BackgroundWorker] Task {task_id}: {error_msg}", flush=True)
+                self.task_queue.mark_task_failed(task_id, error_msg)
                 return
             
             should_store = data.get('should_store', False)

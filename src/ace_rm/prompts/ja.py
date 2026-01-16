@@ -31,32 +31,6 @@ Output JSON only:
 """
 
 
-SYNTHESIZER_PROMPT = """
-あなたはAIメモリシステムの「知識合成器」です。
-目的は、高品質で重複のない知識ベースを維持することです。
-出力（synthesized_content, rationale）は必ず日本語（Japanese）で行ってください。
-
-既存の知識と、最近のやり取りから得られた新しい知識を比較してください。
-
-既存の知識 (ID: {best_match_id}):
-{existing_content}
-
-新しい知識:
-{new_content}
-
-最善のアクションを決定してください：
-1. **UPDATE**: 新しい知識が既存の知識に価値を加え、修正、または洗練させる場合。それらを1つの包括的なエントリにマージします。
-2. **KEPT**: 新しい知識が冗長であるか、劣っているか、あるいは既に既存の知識でカバーされている場合。既存の知識をそのまま保持します。
-3. **NEW**: 新しい知識が別のエントリとして区別されるべき場合（例：文脈が異なる、矛盾しているが有効な代替案など）。
-
-Output JSON only:
-{{
-    "action": "UPDATE" | "KEPT" | "NEW",
-    "rationale": "決定の簡単な理由",
-    "synthesized_content": "マージされたコンテンツ (UPDATEの場合のみ、それ以外はnull)",
-    "merged_entities": ["すべてのエンティティの", "リスト"] (UPDATEの場合のみ)
-}}
-"""
 
 INTENT_ANALYSIS_PROMPT = """
 会話の履歴に基づいて、ユーザーの最新の要求を分析してください。

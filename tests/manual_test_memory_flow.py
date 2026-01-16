@@ -28,7 +28,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(os.path.join(project_root, "src"))
 
-from ace_rm.ace_framework import build_ace_agent, ACE_Memory, MODEL_NAME, BASE_URL, BackgroundWorker, DB_PATH, FAISS_INDEX_PATH
+from ace_rm.ace_framework import build_ace_agent, ACE_Memory, TaskQueue, MODEL_NAME, BASE_URL, BackgroundWorker, DB_PATH, FAISS_INDEX_PATH
 
 # Load environment variables
 load_dotenv()
@@ -84,9 +84,10 @@ def run_test():
 
     # Initialize components for a specific test session
     memory = ACE_Memory(session_id=test_session_id)
+    queue = TaskQueue(session_id=test_session_id)
     # Disable tools for this test since FakeListChatModel doesn't support them
-    ace_app = build_ace_agent(mock_llm, memory, use_tools=False)
-    worker = BackgroundWorker(llm=mock_llm, memory_session_id=test_session_id)
+    ace_app = build_ace_agent(mock_llm, memory, task_queue=queue, use_tools=False)
+    worker = BackgroundWorker(llm=mock_llm, memory=memory, task_queue=queue)
     worker.start()
     
     # Step 1: Structural Learning (Storage)

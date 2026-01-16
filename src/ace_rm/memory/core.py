@@ -214,6 +214,16 @@ class ACE_Memory:
             faiss.write_index(self.index, self.index_path)
             self.last_index_mtime = os.path.getmtime(self.index_path)
 
+    def _sanitize_fts_query(self, query: str) -> str:
+        """Sanitize query for FTS5 to avoid syntax errors."""
+        # Remove or escape characters that have special meaning in FTS5
+        # and could cause syntax errors if used improperly.
+        special_chars = ['"', "'", '*', ':', '(', ')']
+        sanitized = query
+        for char in special_chars:
+            sanitized = sanitized.replace(char, ' ')
+        return sanitized.strip()
+
     def search(self, query: str, k: int = 3, distance_threshold: float = None) -> List[str]:
         if os.path.exists(self.index_path):
             current_mtime = os.path.getmtime(self.index_path)
@@ -256,12 +266,14 @@ class ACE_Memory:
                 try:
                     cursor = conn.cursor()
                     remaining = k - len(results)
-                    cursor.execute("SELECT content FROM documents_fts WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?", (query, remaining))
-                    for row in cursor.fetchall():
-                        if row[0] not in results:
-                            results[row[0]] = row[0]
-                except Exception:
-                    pass
+                    sanitized_query = self._sanitize_fts_query(query)
+                    if sanitized_query:
+                        cursor.execute("SELECT content FROM documents_fts WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?", (sanitized_query, remaining))
+                        for row in cursor.fetchall():
+                            if row[0] not in results:
+                                results[row[0]] = row[0]
+                except Exception as e:
+                    print(f"[ACE_Memory] FTS Search Error: {e}")
         return list(results.values())
     
     def clear(self):
