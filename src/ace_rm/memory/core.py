@@ -325,8 +325,15 @@ class ACE_Memory:
         return list(results.values())
     
     def clear(self):
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        """Clears all documents and resets the FAISS index."""
+        with sqlite3.connect(self.db_path) as conn:
+            try:
+                conn.execute("DELETE FROM documents")
+                # FTS5 table is automatically updated by triggers, 
+                # but it's often better to VACUUM or just let it be.
+            except sqlite3.OperationalError:
+                pass # Table might not exist yet
+
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
         if os.path.exists(self.index_lock_path):
@@ -334,7 +341,7 @@ class ACE_Memory:
                 os.remove(self.index_lock_path)
             except OSError:
                 pass
-        self.__init__(session_id=self.session_id)
+        self._load_or_build_index()
 
     def get_all(self) -> List[Dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:
