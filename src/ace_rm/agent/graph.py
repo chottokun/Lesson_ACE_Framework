@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime
-from typing import List, TypedDict, Optional, Annotated, Tuple, Any, Dict
+from typing import List, TypedDict, Optional, Any, Dict
 from typing_extensions import NotRequired
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -50,7 +50,8 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
     tool_node_instance = ToolNode(tools) if use_tools else None
 
     def tool_executor_node(state: AgentState):
-        if not tool_node_instance: return {}
+        if not tool_node_instance:
+            return {}
         result = tool_node_instance.invoke(state)
         return {"messages": state['messages'] + result['messages']}
 
@@ -68,6 +69,15 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
 
     def curator_node(state: AgentState):
         messages = state['messages']
+
+        # Filter out previous context messages to avoid redundancy
+        messages = [
+            m for m in messages
+            if not (isinstance(m, SystemMessage) and
+                    ("--- Retrieved Context ---" in m.content or
+                     "--- 取得されたコンテキスト ---" in m.content))
+        ]
+
         last_user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         if not last_user_msg:
             return {"context_docs": [], "extracted_entities": [], "problem_class": ""}
@@ -102,8 +112,10 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
         
         try:
             res = call_llm_with_retry(llm, [HumanMessage(content=prompt)]).content.strip()
-            if "```json" in res: res = res.split("```json")[1].split("```")[0]
-            elif "```" in res: res = res.split("```")[1].split("```")[0]
+            if "```json" in res:
+                res = res.split("```json")[1].split("```")[0]
+            elif "```" in res:
+                res = res.split("```")[1].split("```")[0]
             
             data = json.loads(res)
             entities = data.get("entities", [])
@@ -156,13 +168,14 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
         human_msgs = [m for m in messages if isinstance(m, HumanMessage)]
         ai_msgs = [m for m in messages if isinstance(m, AIMessage) and m.content]
         
-        if not human_msgs or not ai_msgs: return {}
+        if not human_msgs or not ai_msgs:
+            return {}
 
         last_human = human_msgs[-1]
         last_ai = ai_msgs[-1]
 
         try:
-            print(f"[Reflector] Enqueueing interaction...", flush=True)
+            print("[Reflector] Enqueueing interaction...", flush=True)
             task_queue.enqueue_task(last_human.content, last_ai.content)
             return {"lesson_learned": "Analysis queued in background.", "should_store": True}
         except Exception as e:

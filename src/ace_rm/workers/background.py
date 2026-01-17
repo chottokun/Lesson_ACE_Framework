@@ -1,8 +1,7 @@
 import threading
 import time
 import json
-import os
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -12,6 +11,12 @@ from ace_rm.memory.core import ACE_Memory
 from ace_rm.memory.queue import TaskQueue
 
 class BackgroundWorker(threading.Thread):
+    """Asynchronous worker that processes the task queue.
+
+    Performs 'Unified Analysis & Synthesis' to extract knowledge from
+    recent interactions and update the Long-Term Memory.
+    """
+
     def __init__(self, llm: ChatOpenAI, memory: ACE_Memory, task_queue: TaskQueue, interval: float = 1.0):
         super().__init__(daemon=True)
         self.memory = memory
@@ -65,14 +70,8 @@ class BackgroundWorker(threading.Thread):
                 existing_docs_str = "\n---\n".join(docs_content)
 
         # 2. Unified Analysis & Synthesis (Single LLM Call)
-        # Determine language for prompt
-        is_jp = os.environ.get("ACE_LANG") == "ja"
-        prompt_tmpl = prompts.UNIFIED_ANALYSIS_PROMPT if is_jp else prompts.UNIFIED_ANALYSIS_PROMPT_EN  # Assuming en.py has UNIFIED.. too, or fallback
-        # Fallback if UNIFIED_ANALYSIS_PROMPT_EN is not available in prompts module (it should be)
-        if not hasattr(prompts, 'UNIFIED_ANALYSIS_PROMPT_EN'):
-             # If strictly separated by files, we might need import adjustment. 
-             # For now, we assume prompts.__init__ handles or we use the textual prompts directly.
-             pass
+        # The prompts module already handles language selection based on ACE_LANG
+        prompt_tmpl = prompts.UNIFIED_ANALYSIS_PROMPT
 
         prompt = prompt_tmpl.format(
             user_input=user_input, 
@@ -82,8 +81,10 @@ class BackgroundWorker(threading.Thread):
         
         try:
             res = self.llm.invoke([HumanMessage(content=prompt)]).content.strip()
-            if "```json" in res: res = res.split("```json")[1].split("```")[0]
-            elif "```" in res: res = res.split("```")[1].split("```")[0]
+            if "```json" in res:
+                res = res.split("```json")[1].split("```")[0]
+            elif "```" in res:
+                res = res.split("```")[1].split("```")[0]
             
             data = json.loads(res)
             
