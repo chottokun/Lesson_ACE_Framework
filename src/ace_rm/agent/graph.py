@@ -65,7 +65,14 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
     skip_pattern_compiled = [re.compile(p, re.IGNORECASE) for p in simple_patterns]
 
     def curator_node(state: AgentState):
-        messages = state['messages']
+        # Filter out previous curator-injected context messages to avoid accumulation
+        messages = [
+            m for m in state['messages']
+            if not (isinstance(m, SystemMessage) and "---" in m.content and (
+                "Retrieved Context" in m.content or "取得されたコンテキスト" in m.content
+            ))
+        ]
+
         last_user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         if not last_user_msg:
             return {"context_docs": [], "extracted_entities": [], "problem_class": ""}

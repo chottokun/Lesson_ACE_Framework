@@ -1,6 +1,7 @@
 # Agentic Context Engineering Framework Lesson （学習メモ）:
 
 ※このレポジトリは勉強中の立場から自分なりに解釈・改変しつつまとめた学習ログです。
+
 This repository documents my learner‑level exploration of the ACE Framework.
 It includes personal interpretations, experimental notes, and incremental refinements made while studying the topic.
 
@@ -24,9 +25,9 @@ The ACE Framework operates on a cognitive cycle composed of five key components:
 
 4.  **Background Worker (Structural Learning)**
     *   **Function**: A dedicated thread that continuously processes the task queue.
-    *   **Structural Learning (MFR)**: Deconstructs the conversation into a **Specific Model** and **Generalization**.
-    *   **Intelligent Synthesis**: Uses an **LLM-based Synthesizer** (in `BackgroundWorker`) to decide whether to **UPDATE**, **KEEP**, or add as **NEW** knowledge.
-    *   **Optimization**: Shared memory/model architecture prevents redundant resource loading.
+    *   **Unified Analysis**: Uses a single LLM call to analyze the interaction and decide on **NEW**, **UPDATE**, or **KEPT** action based on existing context.
+    *   **Structural Knowledge Model**: Transforms raw analysis into a symbolic model containing **Entities**, **State Variables**, **Actions**, and **Constraints**.
+    *   **Optimization**: Shared memory/model architecture and optimized SQLite/FAISS management.
 
 5.  **Long-Term Memory**
     *   **Hybrid Storage**: `ACE_Memory` class combines **SQLite** (documents) and **FAISS** (vectors).
@@ -117,11 +118,13 @@ graph TD
     -   **関連コード**: `ace_framework.py` - `BackgroundWorker.run`, `ACE_Memory.fetch_pending_task`
 
 -   **分析と一般化**
-    -   取得したタスク（対話ペア）を`BackgroundWorker.process_task`メソッドで処理します。ここでは、「具体的なモデルの分析」と「抽象的なパターンの一般化」を行うように設計されたプロンプトを使ってLLMを再度呼び出します。このステップで、対話から再利用可能な知識（教訓や戦略）が抽出されます。
-    -   **関連コード**: `ace_framework.py` - `BackgroundWorker.process_task`
+    -   取得したタスク（対話ペア）を`BackgroundWorker.process_task`メソッドで処理します。「統合分析プロンプト」を用いて、保存の要否、および既存の記憶との統合（UPDATE / NEW / KEPT）を一度のLLM呼び出しで判断します。
+
+-   **構造化知識モデルの生成**
+    -   保存すべきと判断された場合、`LTM_KNOWLEDGE_MODEL_PROMPT`を適用し、生の分析結果を「エンティティ」「状態変数」「アクション」「制約」からなるシンボリックな知識モデルに変換します。これにより、情報の再利用性と信頼性が向上します。
 
 -   **長期記憶への保存**
-    -   LLMによる分析結果に、保存すべき価値がある（`should_store: true`）と判断された場合、抽出された知識が`ACE_Memory.add`メソッドを通じて長期記憶に保存されます。具体的には、テキストデータはSQLiteに、そのベクトル表現はFAISSインデックスに追加されます。これにより、未来の対話でCuratorがこの新しい知識を検索・利用できるようになります。
+    -   生成された構造化知識が`ACE_Memory.add`または`update_document`メソッドを通じて長期記憶に保存されます。テキストデータはSQLiteに、そのベクトル表現はFAISSインデックスに追加されます。
     -   **関連コード**: `ace_framework.py` - `ACE_Memory.add`メソッド
 
 ## 🚀 Setup & Installation

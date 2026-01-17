@@ -31,32 +31,6 @@ Output JSON only:
 """
 
 
-SYNTHESIZER_PROMPT = """
-あなたはAIメモリシステムの「知識合成器」です。
-目的は、高品質で重複のない知識ベースを維持することです。
-出力（synthesized_content, rationale）は必ず日本語（Japanese）で行ってください。
-
-既存の知識と、最近のやり取りから得られた新しい知識を比較してください。
-
-既存の知識 (ID: {best_match_id}):
-{existing_content}
-
-新しい知識:
-{new_content}
-
-最善のアクションを決定してください：
-1. **UPDATE**: 新しい知識が既存の知識に価値を加え、修正、または洗練させる場合。それらを1つの包括的なエントリにマージします。
-2. **KEPT**: 新しい知識が冗長であるか、劣っているか、あるいは既に既存の知識でカバーされている場合。既存の知識をそのまま保持します。
-3. **NEW**: 新しい知識が別のエントリとして区別されるべき場合（例：文脈が異なる、矛盾しているが有効な代替案など）。
-
-Output JSON only:
-{{
-    "action": "UPDATE" | "KEPT" | "NEW",
-    "rationale": "決定の簡単な理由",
-    "synthesized_content": "マージされたコンテンツ (UPDATEの場合のみ、それ以外はnull)",
-    "merged_entities": ["すべてのエンティティの", "リスト"] (UPDATEの場合のみ)
-}}
-"""
 
 INTENT_ANALYSIS_PROMPT = """
 会話の履歴に基づいて、ユーザーの最新の要求を分析してください。
@@ -78,3 +52,32 @@ Output JSON only:
 """
 
 RETRIEVED_CONTEXT_TEMPLATE = "--- 取得されたコンテキスト ---\n{context_str}\n-----------------------"
+
+
+LTM_KNOWLEDGE_MODEL_PROMPT = """
+以下の情報を分析し、推論に不可欠な最小限の構造モデルを抽出してください。
+各項目は箇条書きで、1行30文字以内の「シンボリックな表現」を心がけてください。
+
+---
+分析対象:
+{context}
+---
+
+## エンティティ
+永続的なオブジェクトのみ特定。
+- 例: User, Session, Config
+
+## 状態変数
+変化を追跡すべき動的プロパティ。
+- 例: is_authenticated: bool
+
+## アクション
+実行可能な操作と「前提条件」→「効果」。
+- 例: login(credentials) → session生成
+
+## 制約
+破ってはならない不変の境界条件。
+- 例: session有効期限 <= 24h
+
+※注意：解決策は書かず、問題の「設計図」のみを出力してください。
+"""

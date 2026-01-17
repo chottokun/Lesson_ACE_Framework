@@ -28,3 +28,40 @@ def test_add_and_search(memory):
     # Test Get All
     all_docs = memory.get_all()
     assert len(all_docs) == 2
+
+def test_add_batch(memory):
+    items = [
+        {"content": "Batch item 1", "entities": ["E1"], "problem_class": "P1"},
+        {"content": "Batch item 2", "entities": ["E2"], "problem_class": "P2"}
+    ]
+    memory.add_batch(items)
+
+    all_docs = memory.get_all()
+    assert len(all_docs) == 2
+
+    results = memory.search("Batch item", k=2)
+    assert len(results) == 2
+
+def test_update_document(memory):
+    memory.add("Original content", entities=["old"], problem_class="old_p")
+    doc_id = memory.get_all()[0]['id']
+
+    memory.update_document(doc_id, "New content", entities=["new"], problem_class="new_p")
+
+    doc = memory.get_document_by_id(doc_id)
+    assert doc['content'] == "New content"
+    assert "new" in doc['entities']
+
+    # Vector search should find new content
+    results = memory.search("New content", k=1)
+    assert "New content" in results[0]
+
+    # And not the old one (ideally, but similarity might still be high, so check specifically)
+    results_old = memory.search("Original content", k=1)
+    if results_old:
+        assert "New content" in results_old[0] # Because the doc was updated
+
+def test_fts_sanitization(memory):
+    # This should not crash
+    results = memory.search("unexpected'quote\"", k=1)
+    assert isinstance(results, list)

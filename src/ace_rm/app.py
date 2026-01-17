@@ -82,9 +82,10 @@ def process_chat(user_message: str, history: list, session_id: str):
     ace_app = session_agent["app"]
 
     if not user_message:
-        # On empty input, just refresh the memory view
+        # On empty input, just refresh the memory and task views
         memory_df = get_memory_df(session_agent["memory"])
-        return history, "", "", "", "", memory_df
+        task_df = get_task_df(session_agent["queue"])
+        return history, "", "", "", "", memory_df, task_df
 
     # Gradio 6.x history is often a list of dictionaries [{'role': 'user', 'content': '...'}, ...]
     # or the previous list of tuples format. We handle both to be safe.
@@ -172,7 +173,7 @@ def reset_memory_handler(session_id: str):
     session_agent = get_session_agent(session_id)
     session_agent["memory"].clear()
     session_agent["queue"].clear()
-    return get_memory_df(session_agent["memory"])
+    return get_memory_df(session_agent["memory"]), get_task_df(session_agent["queue"])
 
 def apply_distance_threshold(session_id: str, threshold: float):
     """Apply new distance threshold to the memory instance"""
@@ -266,7 +267,7 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     refresh_mem_btn.click(refresh_ui_state, inputs=[session_id], outputs=[memory_table, task_table])
-    reset_mem_btn.click(reset_memory_handler, inputs=[session_id], outputs=[memory_table])
+    reset_mem_btn.click(reset_memory_handler, inputs=[session_id], outputs=[memory_table, task_table])
     
     # Distance threshold control
     threshold_status = gr.Textbox(visible=False)  # Hidden status indicator

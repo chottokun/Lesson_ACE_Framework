@@ -62,13 +62,25 @@ class TaskQueue:
             conn.execute("UPDATE task_queue SET status = 'failed', error_msg = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (error_msg, task_id))
 
     def get_tasks(self) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, user_input, status, created_at, updated_at, error_msg FROM task_queue ORDER BY id DESC LIMIT 20")
-            return [dict(row) for row in cursor.fetchall()]
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, user_input, status, created_at, updated_at, error_msg FROM task_queue ORDER BY id DESC LIMIT 20")
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                self._init_db()
+                return []
+            raise
 
     def clear(self):
-        """Note: This is usually handled by memory.clear() if they share the same DB file."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM task_queue")
+        
+        # VACUUM must be run outside of a transaction (autocommit mode)
+        conn = sqlite3.connect(self.db_path, isolation_level=None)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()

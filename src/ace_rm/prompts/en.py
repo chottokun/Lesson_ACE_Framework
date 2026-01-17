@@ -31,31 +31,6 @@ Output JSON only:
 """
 
 
-SYNTHESIZER_PROMPT = """
-You are the "Knowledge Synthesizer" for an AI memory system.
-Your goal is to maintain a high-quality, non-redundant knowledge base.
-
-Compare the EXISTING KNOWLEDGE with the NEW KNOWLEDGE derived from a recent interaction.
-
-EXISTING KNOWLEDGE (ID: {best_match_id}):
-{existing_content}
-
-NEW KNOWLEDGE:
-{new_content}
-
-Determine the best action:
-1. **UPDATE**: The NEW knowledge adds value, corrects, or refines the EXISTING knowledge. Merge them into a single, comprehensive entry.
-2. **KEPT**: The NEW knowledge is redundant, inferior, or already covered by EXISTING. Keep EXISTING as is.
-3. **NEW**: The NEW knowledge is distinct enough to be a separate entry (e.g., different context, contradictory but valid alternative).
-
-Output JSON only:
-{{
-    "action": "UPDATE" | "KEPT" | "NEW",
-    "rationale": "Brief reason for decision",
-    "synthesized_content": "Merged content (only for UPDATE, otherwise null)",
-    "merged_entities": ["list", "of", "all", "entities"] (only for UPDATE)
-}}
-"""
 
 INTENT_ANALYSIS_PROMPT = """
 Based on the conversation history, analyze the user's latest request.
@@ -77,3 +52,32 @@ Output JSON only:
 """
 
 RETRIEVED_CONTEXT_TEMPLATE = "--- Retrieved Context ---\n{context_str}\n-----------------------"
+
+
+LTM_KNOWLEDGE_MODEL_PROMPT = """
+Analyze the following information and extract the minimal structural model essential for reasoning.
+Use bullet points with symbolic expressions (max 30 chars per line).
+
+---
+Context:
+{context}
+---
+
+## Entities
+Identify only persistent objects.
+- e.g.: User, Session, Config
+
+## State Variables
+Dynamic properties to track changes.
+- e.g.: is_authenticated: bool
+
+## Actions
+Operations with "preconditions" → "effects".
+- e.g.: login(creds) → session created
+
+## Constraints
+Invariant boundary conditions that must not be violated.
+- e.g.: session_ttl <= 24h
+
+Note: Output only the "blueprint" of the problem, not solutions.
+"""
