@@ -1,6 +1,7 @@
 import json
 import os
-from typing import List, TypedDict, Optional, Annotated, Tuple, Any
+from datetime import datetime
+from typing import List, TypedDict, Optional, Annotated, Tuple, Any, Dict
 from typing_extensions import NotRequired
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -21,6 +22,7 @@ class AgentState(TypedDict):
     extracted_entities: List[str]
     problem_class: str
     retry_count: int
+    stm: NotRequired[Dict[str, Any]]  # Short-Term Memory (response_style, turn_count, etc.)
     lesson_learned: NotRequired[str]
     should_store: NotRequired[bool]
 
@@ -126,12 +128,25 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
             return {"context_docs": [], "extracted_entities": [], "problem_class": ""}
 
     def agent_node(state: AgentState):
-        messages = state['messages']
+        messages = list(state['messages'])
+        stm = state.get('stm', {})
+        
+        # Inject STM context as a system message at the beginning
+        if stm:
+            style_key = stm.get('response_style', 'detailed')
+            style_instruction = prompts.RESPONSE_STYLE_INSTRUCTIONS.get(style_key, '')
+            stm_context = prompts.STM_CONTEXT_TEMPLATE.format(
+                current_time=stm.get('current_time', datetime.now().isoformat()),
+                turn_count=stm.get('turn_count', 0),
+                style_instruction=style_instruction
+            )
+            messages = [SystemMessage(content=stm_context)] + messages
+        
         try:
             response = call_llm_with_retry(llm_with_tools, messages)
-            return {"messages": messages + [response]}
+            return {"messages": state['messages'] + [response]}
         except Exception as e:
-            return {"messages": messages + [AIMessage(content=f"Error in Agent: {e}")]}
+            return {"messages": state['messages'] + [AIMessage(content=f"Error in Agent: {e}")]}
 
     def reflector_node(state: AgentState):
         if task_queue is None:

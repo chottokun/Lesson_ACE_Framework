@@ -78,3 +78,22 @@ Output JSON only:
 """
 
 RETRIEVED_CONTEXT_TEMPLATE = "--- 取得されたコンテキスト ---\n{context_str}\n-----------------------"
+
+# --- STM (Short-Term Memory) Templates ---
+
+RESPONSE_STYLE_INSTRUCTIONS = {
+    "concise": "簡潔に回答してください。要点のみを述べ、冗長な説明は避けてください。",
+    "detailed": "詳細に説明してください。背景情報や関連する考慮事項も含めてください。",
+    "evidence-based": "根拠を重視して回答してください。主張には必ず情報源や論拠を明示してください。",
+    "step-by-step": "ステップバイステップで説明してください。手順やプロセスを順序立てて示してください。",
+    "comparative": "比較・対照の形式で回答してください。選択肢がある場合はメリット・デメリットを明示してください。",
+    "tutorial": "チュートリアル形式で回答してください。初心者にもわかるよう、前提知識から丁寧に説明してください。",
+    "summary-only": "要約のみで回答してください。結論を1-2文で簡潔に述べてください。"
+}
+
+STM_CONTEXT_TEMPLATE = """--- セッション情報 ---
+現在時刻: {current_time}
+対話ターン: {turn_count}
+{style_instruction}
+-----------------------
+"""

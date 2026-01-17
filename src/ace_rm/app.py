@@ -2,6 +2,7 @@ import gradio as gr
 import pandas as pd
 import uuid
 import os
+from datetime import datetime
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage, AIMessage
@@ -74,7 +75,7 @@ def get_session_agent(session_id: str):
     return agent_sessions[session_id]
 
 
-def process_chat(user_message: str, history: list, session_id: str):
+def process_chat(user_message: str, history: list, session_id: str, response_style: str):
     """
     Executes the ACE Agent for the given session.
     """
@@ -103,9 +104,16 @@ def process_chat(user_message: str, history: list, session_id: str):
 
     messages.append(HumanMessage(content=user_message))
 
+    # Build STM (Short-Term Memory) object
+    stm = {
+        "current_time": datetime.now().isoformat(),
+        "response_style": response_style,
+        "turn_count": len([m for m in history if isinstance(m, dict) and m.get('role') == 'user']) + 1
+    }
+
     initial_state = {
         "messages": messages, "retry_count": 0, "context_docs": [],
-        "extracted_entities": [], "problem_class": ""
+        "extracted_entities": [], "problem_class": "", "stm": stm
     }
     
     final_state = ace_app.invoke(initial_state)
@@ -221,6 +229,21 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
                     info="Lower = stricter (Cosine: higher similarity, L2: smaller distance)" if not is_cosine else "Higher = stricter (Similarity score)"
                 )
                 gr.Markdown("*Adjust relevance filtering criteria*")
+            with gr.Group():
+                gr.Markdown("#### 🎛️ 応答設定 (STM)")
+                response_style = gr.Dropdown(
+                    choices=[
+                        ("簡潔", "concise"),
+                        ("詳細", "detailed"),
+                        ("根拠重視", "evidence-based"),
+                        ("ステップバイステップ", "step-by-step"),
+                        ("比較・対照", "comparative"),
+                        ("チュートリアル", "tutorial"),
+                        ("要約のみ", "summary-only"),
+                    ],
+                    value="detailed",
+                    label="応答スタイル"
+                )
 
     with gr.Row():
         with gr.Column():
@@ -255,13 +278,13 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
 
     submit_btn.click(
         process_chat,
-        inputs=[msg, chatbot, session_id],
+        inputs=[msg, chatbot, session_id, response_style],
         outputs=[chatbot, curator_intent, curator_context, ltm_status, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     msg.submit(
         process_chat,
-        inputs=[msg, chatbot, session_id],
+        inputs=[msg, chatbot, session_id, response_style],
         outputs=[chatbot, curator_intent, curator_context, ltm_status, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 

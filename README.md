@@ -28,9 +28,14 @@ The ACE Framework operates on a cognitive cycle composed of five key components:
     *   **Intelligent Synthesis**: Uses an **LLM-based Synthesizer** (in `BackgroundWorker`) to decide whether to **UPDATE**, **KEEP**, or add as **NEW** knowledge.
     *   **Optimization**: Shared memory/model architecture prevents redundant resource loading.
 
-5.  **Long-Term Memory**
+5.  **Long-Term Memory (LTM)**
     *   **Hybrid Storage**: `ACE_Memory` class combines **SQLite** (documents) and **FAISS** (vectors).
     *   **Task Queue**: `TaskQueue` class manages background jobs independently of the vector store, ensuring **ChromaDB Readiness**.
+
+6.  **Short-Term Memory (STM)**
+    *   **Function**: Maintains session-level state that persists across a single conversation.
+    *   **User-Configurable**: Response style (concise, detailed, evidence-based, step-by-step, comparative, tutorial, summary-only) can be selected via UI dropdown.
+    *   **Context Injection**: Current time, turn count, and style instructions are injected as a `SystemMessage` to guide the Agent's response format.
 
 ## ⚙️ 処理フローの可視化 (Visualization)
 
@@ -193,6 +198,20 @@ uv run python src/ace_rm/app.py
 *   **Left Pane**: Chat interface.
 *   **Center Pane**: Debug view showing **Curator** retrieval ("Retrieved Context"), **LTM Status** (Total Docs), and **Background Processing** status (Queue/Recent Activity).
 *   **Right Pane**: Live view of the Long-Term Memory database.
+
+#### 🎛️ Response Style (STM Settings)
+
+In the debug panel, you can select a response style to control how the agent formats its answers:
+
+| Style | Description |
+|:---|:---|
+| **簡潔 (Concise)** | Brief, key points only |
+| **詳細 (Detailed)** | Comprehensive with background info |
+| **根拠重視 (Evidence-based)** | Cites sources and reasoning |
+| **ステップバイステップ (Step-by-step)** | Ordered procedural explanation |
+| **比較・対照 (Comparative)** | Pros/cons analysis |
+| **チュートリアル (Tutorial)** | Beginner-friendly walkthrough |
+| **要約のみ (Summary-only)** | 1-2 sentence conclusion |
 
 ### Command Line Interface
 
