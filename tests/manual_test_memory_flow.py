@@ -28,7 +28,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(os.path.join(project_root, "src"))
 
-from ace_rm.ace_framework import build_ace_agent, ACE_Memory, MODEL_NAME, BASE_URL, BackgroundWorker, DB_PATH, FAISS_INDEX_PATH
+from ace_rm.graph import build_ace_agent
+from ace_rm.memory import ACE_Memory
+from ace_rm.worker import BackgroundWorker
+from ace_rm import config
 
 # Load environment variables
 load_dotenv()
@@ -51,7 +54,7 @@ def cleanup_db(session_id="test_session"):
                 print(f"  Removed: {file}")
 
     # Clean up global files as well for a completely clean slate
-    global_files = [DB_PATH, FAISS_INDEX_PATH, f"{FAISS_INDEX_PATH}.lock"]
+    global_files = [config.DB_PATH, config.FAISS_INDEX_PATH, f"{config.FAISS_INDEX_PATH}.lock"]
     for file in global_files:
         path = os.path.join(project_root, file)
         if os.path.exists(path):

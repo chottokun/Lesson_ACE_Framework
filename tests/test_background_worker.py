@@ -85,7 +85,7 @@ def test_background_worker_process_failure(memory):
     mock_llm = MagicMock()
     
     # We patch call_llm_with_retry to avoid tenacity retries and directly raise
-    with unittest.mock.patch('ace_rm.ace_framework.call_llm_with_retry') as mock_call:
+    with unittest.mock.patch('ace_rm.utils.call_llm_with_retry') as mock_call:
         mock_call.side_effect = Exception("API Connection Error")
         
         worker = BackgroundWorker(llm=mock_llm, memory_session_id=memory.session_id)
