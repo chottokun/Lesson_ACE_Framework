@@ -41,7 +41,8 @@ if LTM_MODE == "shared":
         "memory": shared_memory,
         "queue": shared_queue,
         "app": shared_ace_app,
-        "worker": shared_worker
+        "worker": shared_worker,
+        "stm_model": {"constraints": [], "actions": [], "entities": []}  # Initialize empty World Model
     }
 
 def get_session_agent(session_id: str):
@@ -70,7 +71,8 @@ def get_session_agent(session_id: str):
             "memory": memory_instance,
             "queue": queue_instance,
             "app": ace_app_instance,
-            "worker": worker_instance
+            "worker": worker_instance,
+            "stm_model": {"constraints": [], "actions": [], "entities": []}  # Initialize empty World Model
         }
     return agent_sessions[session_id]
 
@@ -86,7 +88,8 @@ def process_chat(user_message: str, history: list, session_id: str, response_sty
         # On empty input, just refresh the memory and task views
         memory_df = get_memory_df(session_agent["memory"])
         task_df = get_task_df(session_agent["queue"])
-        return history, "", "", "Refreshing...", "Refreshing...", memory_df, task_df
+        # Return 8 values: history, entities, context, stm_model, ltm_status, reflector_status, memory_df, task_df
+        return history, "", "", {}, "Refreshing...", "Refreshing...", memory_df, task_df
 
     # Gradio 6.x history is often a list of dictionaries [{'role': 'user', 'content': '...'}, ...]
     # or the previous list of tuples format. We handle both to be safe.
@@ -106,10 +109,14 @@ def process_chat(user_message: str, history: list, session_id: str, response_sty
     messages.append(HumanMessage(content=user_message))
 
     # Build STM (Short-Term Memory) object
+    # Retrieve persisted World Model
+    persisted_model = session_agent.get("stm_model", {"constraints": [], "actions": [], "entities": []})
+    
     stm = {
         "current_time": datetime.now().isoformat(),
         "response_style": response_style,
-        "turn_count": len([m for m in history if isinstance(m, dict) and m.get('role') == 'user']) + 1
+        "turn_count": len([m for m in history if isinstance(m, dict) and m.get('role') == 'user']) + 1,
+        "model": persisted_model  # Inject persisted model
     }
 
     initial_state = {
@@ -160,9 +167,17 @@ def process_chat(user_message: str, history: list, session_id: str, response_sty
     current_doc_count = len(new_memory_df)
     ltm_status = f"📚 Total: {current_doc_count} documents"
 
+    # Get STM Model
+    stm_state = final_state.get('stm', {})
+    stm_model = stm_state.get('model', {})
+    
+    # Persist updated model back to session
+    if stm_model:
+        session_agent["stm_model"] = stm_model
+    
     return (
-        new_history, entities_str, context_str,
-        ltm_status, reflector_status, memory_df if not user_message else new_memory_df, new_task_df
+        new_history, entities_str, context_str, stm_model,
+        ltm_status, reflector_status, new_memory_df, new_task_df
     )
 
 def get_memory_df(memory_instance: ACE_Memory):
@@ -211,6 +226,7 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
             with gr.Group():
                 curator_intent = gr.Textbox(label="Curator: Intent & Entities", lines=4, interactive=False)
                 curator_context = gr.Textbox(label="Curator: Retrieved Context", lines=10, interactive=False)
+                stm_view = gr.JSON(label="STM (World Model)")
                 ltm_status = gr.Textbox(label="LTM Status", interactive=False)
                 reflector_status = gr.Textbox(label="Background Processing", interactive=False)
             with gr.Group():
@@ -280,13 +296,13 @@ with gr.Blocks(title="ACE Agent Framework") as demo:
     submit_btn.click(
         process_chat,
         inputs=[msg, chatbot, session_id, response_style],
-        outputs=[chatbot, curator_intent, curator_context, ltm_status, reflector_status, memory_table, task_table]
+        outputs=[chatbot, curator_intent, curator_context, stm_view, ltm_status, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     msg.submit(
         process_chat,
         inputs=[msg, chatbot, session_id, response_style],
-        outputs=[chatbot, curator_intent, curator_context, ltm_status, reflector_status, memory_table, task_table]
+        outputs=[chatbot, curator_intent, curator_context, stm_view, ltm_status, reflector_status, memory_table, task_table]
     ).then(lambda: "", None, msg) # Clear msg AFTER update
 
     refresh_mem_btn.click(refresh_ui_state, inputs=[session_id], outputs=[memory_table, task_table])
