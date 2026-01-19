@@ -1,6 +1,7 @@
 import json
 import os
-from typing import List, TypedDict, Optional, Annotated, Tuple, Any
+from datetime import datetime
+from typing import List, TypedDict, Optional, Any, Dict
 from typing_extensions import NotRequired
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -13,6 +14,8 @@ from langgraph.prebuilt import ToolNode
 from ace_rm import prompts
 from ace_rm.memory.core import ACE_Memory
 from ace_rm.memory.queue import TaskQueue
+from ace_rm.utils.stm_manager import apply_diff
+
 
 # --- Agent State ---
 class AgentState(TypedDict):
@@ -21,6 +24,7 @@ class AgentState(TypedDict):
     extracted_entities: List[str]
     problem_class: str
     retry_count: int
+    stm: NotRequired[Dict[str, Any]]  # Short-Term Memory (response_style, turn_count, etc.)
     lesson_learned: NotRequired[str]
     should_store: NotRequired[bool]
 
@@ -48,7 +52,8 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
     tool_node_instance = ToolNode(tools) if use_tools else None
 
     def tool_executor_node(state: AgentState):
-        if not tool_node_instance: return {}
+        if not tool_node_instance:
+            return {}
         result = tool_node_instance.invoke(state)
         return {"messages": state['messages'] + result['messages']}
 
@@ -66,6 +71,15 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
 
     def curator_node(state: AgentState):
         messages = state['messages']
+
+        # Filter out previous context messages to avoid redundancy
+        messages = [
+            m for m in messages
+            if not (isinstance(m, SystemMessage) and
+                    ("--- Retrieved Context ---" in m.content or
+                     "--- 取得されたコンテキスト ---" in m.content))
+        ]
+
         last_user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         if not last_user_msg:
             return {"context_docs": [], "extracted_entities": [], "problem_class": ""}
@@ -91,23 +105,39 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
                     "messages": context_msg + messages if context_msg else messages
                 }
 
-        # Full path: LLM-based intent analysis
+        # Full path: LLM-based intent analysis (Curator + MFR)
         history_txt = "\n".join([f"{type(m).__name__}: {m.content}" for m in messages[-5:-1]])
+        
+        # Get Current Model from State
+        current_stm = state.get('stm', {})
+        current_model = current_stm.get('model', {"constraints": [], "actions": [], "entities": []})
+        
         prompt = prompts.INTENT_ANALYSIS_PROMPT.format(
             user_input=user_input,
+            current_model=json.dumps(current_model, ensure_ascii=False),
             history_txt=history_txt
         )
         
         try:
             res = call_llm_with_retry(llm, [HumanMessage(content=prompt)]).content.strip()
-            if "```json" in res: res = res.split("```json")[1].split("```")[0]
-            elif "```" in res: res = res.split("```")[1].split("```")[0]
+            if "```json" in res:
+                res = res.split("```json")[1].split("```")[0]
+            elif "```" in res:
+                res = res.split("```")[1].split("```")[0]
             
             data = json.loads(res)
             entities = data.get("entities", [])
             p_class = data.get("problem_class", "")
             query = data.get("search_query", user_input)
+            stm_diffs = data.get("stm_diffs", [])
             
+            # --- Apply MFR Diffs ---
+            new_model = current_model
+            if stm_diffs:
+                print(f"[MFR] Applying Diffs: {stm_diffs}")
+                new_model = apply_diff(current_model, stm_diffs)
+            
+            # Vector Search
             docs = memory.search(query)
             
             context_msg = []
@@ -115,23 +145,42 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
                 context_str = "\n".join(docs)
                 context_msg = [SystemMessage(content=prompts.RETRIEVED_CONTEXT_TEMPLATE.format(context_str=context_str))]
             
+            # Prepare updated STM state
+            new_stm = current_stm.copy()
+            new_stm['model'] = new_model
+            
             return {
                 "context_docs": docs,
                 "extracted_entities": entities,
                 "problem_class": p_class,
+                "stm": new_stm,  # Update STM in state
                 "messages": context_msg + messages if context_msg else messages
             }
         except Exception as e:
             print(f"[Curator] Error: {e}")
             return {"context_docs": [], "extracted_entities": [], "problem_class": ""}
 
+
     def agent_node(state: AgentState):
-        messages = state['messages']
+        messages = list(state['messages'])
+        stm = state.get('stm', {})
+        
+        # Inject STM context as a system message at the beginning
+        if stm:
+            style_key = stm.get('response_style', 'detailed')
+            style_instruction = prompts.RESPONSE_STYLE_INSTRUCTIONS.get(style_key, '')
+            stm_context = prompts.STM_CONTEXT_TEMPLATE.format(
+                current_time=stm.get('current_time', datetime.now().isoformat()),
+                turn_count=stm.get('turn_count', 0),
+                style_instruction=style_instruction
+            )
+            messages = [SystemMessage(content=stm_context)] + messages
+        
         try:
             response = call_llm_with_retry(llm_with_tools, messages)
-            return {"messages": messages + [response]}
+            return {"messages": state['messages'] + [response]}
         except Exception as e:
-            return {"messages": messages + [AIMessage(content=f"Error in Agent: {e}")]}
+            return {"messages": state['messages'] + [AIMessage(content=f"Error in Agent: {e}")]}
 
     def reflector_node(state: AgentState):
         if task_queue is None:
@@ -141,13 +190,14 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
         human_msgs = [m for m in messages if isinstance(m, HumanMessage)]
         ai_msgs = [m for m in messages if isinstance(m, AIMessage) and m.content]
         
-        if not human_msgs or not ai_msgs: return {}
+        if not human_msgs or not ai_msgs:
+            return {}
 
         last_human = human_msgs[-1]
         last_ai = ai_msgs[-1]
 
         try:
-            print(f"[Reflector] Enqueueing interaction...", flush=True)
+            print("[Reflector] Enqueueing interaction...", flush=True)
             task_queue.enqueue_task(last_human.content, last_ai.content)
             return {"lesson_learned": "Analysis queued in background.", "should_store": True}
         except Exception as e:

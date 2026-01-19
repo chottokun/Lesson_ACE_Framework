@@ -5,6 +5,12 @@ from typing import List, Optional, Dict, Any
 from ace_rm.config import DB_PATH
 
 class TaskQueue:
+    """Manages the background task queue for structural learning.
+
+    Persists interaction pairs to SQLite for asynchronous processing
+    by the BackgroundWorker.
+    """
+
     def __init__(self, session_id: Optional[str] = None):
         self.session_id = session_id
         if self.session_id:
@@ -33,6 +39,7 @@ class TaskQueue:
             """)
 
     def enqueue_task(self, user_input: str, agent_output: str):
+        self._init_db()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO task_queue (user_input, agent_output) VALUES (?, ?)",
@@ -40,6 +47,7 @@ class TaskQueue:
             )
 
     def fetch_pending_task(self) -> Optional[Dict[str, Any]]:
+        self._init_db()
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()

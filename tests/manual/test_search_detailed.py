@@ -5,7 +5,6 @@ Comprehensive test suite for ACE Memory search functionality
 import sys
 sys.path.insert(0, 'src')
 from ace_rm.ace_framework import ACE_Memory
-import json
 
 def test_memory_search():
     # Test with global shared memory
@@ -63,7 +62,7 @@ def test_memory_search():
     print("-" * 80)
     
     # Check FAISS index status
-    print(f"\nFAISS Index:")
+    print("\nFAISS Index:")
     print(f"  Total vectors: {memory.index.ntotal}")
     print(f"  Dimension: {memory.dimension}")
     
@@ -76,13 +75,13 @@ def test_memory_search():
         query_vec = memory.encoder.encode([test_query])
         import numpy as np
         D, I = memory.index.search(np.array(query_vec).astype('float32'), 3)
-        print(f"\nVector Search Results (distances and IDs):")
+        print("\nVector Search Results (distances and IDs):")
         for dist, idx in zip(D[0], I[0]):
             if idx >= 0:
                 print(f"  ID={idx}, Distance={dist:.4f}")
     
     # FTS search
-    print(f"\nFTS (Full-Text Search) Results:")
+    print("\nFTS (Full-Text Search) Results:")
     import sqlite3
     with sqlite3.connect(memory.db_path) as conn:
         try:
@@ -102,7 +101,7 @@ def test_memory_search():
     print("-" * 80)
     
     # Check if all documents have vectors
-    print(f"\nVector count vs Document count:")
+    print("\nVector count vs Document count:")
     print(f"  Documents in DB: {len(all_docs)}")
     print(f"  Vectors in FAISS: {memory.index.ntotal}")
     
@@ -111,7 +110,7 @@ def test_memory_search():
     
     # Check for duplicate or very similar content
     if len(all_docs) > 1:
-        print(f"\nContent similarity check:")
+        print("\nContent similarity check:")
         for i in range(min(3, len(all_docs))):
             for j in range(i+1, min(3, len(all_docs))):
                 doc1 = all_docs[i]['content'][:100]

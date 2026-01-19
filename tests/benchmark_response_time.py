@@ -14,12 +14,12 @@ import os
 import sys
 import time
 import uuid
-from typing import Callable, Dict, Any, List
+from typing import Dict, Any, List
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
 from ace_rm.config import MODEL_NAME, BASE_URL, OPENAI_API_KEY, LLM_TEMPERATURE

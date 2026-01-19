@@ -6,8 +6,6 @@ import sys
 sys.path.insert(0, 'src')
 from ace_rm.ace_framework import ACE_Memory
 import time
-import os
-import shutil
 
 def test_duplication_and_stale_index():
     print("=" * 80)
@@ -35,7 +33,7 @@ def test_duplication_and_stale_index():
     print(f"  Adding content via Memory B: '{test_content}'")
     mem_b.add(test_content, entities=["TestEntity"], problem_class="TestClass")
     
-    print(f"  Adding SAME content again via Memory B...")
+    print("  Adding SAME content again via Memory B...")
     mem_b.add(test_content, entities=["TestEntity"], problem_class="TestClass")
     
     # Check count in Memory B (it should have reloaded index/db on add)
@@ -66,7 +64,7 @@ def test_duplication_and_stale_index():
     if found:
         print("  >>> PASS: Memory A found the content added by Memory B.")
     else:
-        print(f"  >>> FAIL: Memory A did NOT find the content added by Memory B.")
+        print("  >>> FAIL: Memory A did NOT find the content added by Memory B.")
         print(f"  Results found: {len(results_a)}")
         if results_a:
             print(f"  Top result: {results_a[0][:50]}...")

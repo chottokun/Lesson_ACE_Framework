@@ -59,22 +59,54 @@ Output JSON only:
 """
 
 INTENT_ANALYSIS_PROMPT = """
-会話の履歴に基づいて、ユーザーの最新の要求を分析してください。
+会話の履歴と「現在の世界モデル（Current Model）」に基づいて、ユーザーの最新の入力（User Input）を分析してください。
 
-次の2つの事項を対象としてください：
-1. 要求に含まれる具体的なエンティティと事実。
-2. 要求に関連する抽象的な問題クラス、構造的パターン、または一般的原則。
-
-ユーザーの要求: "{user_input}"
-履歴: 
+# Inputs
+1. **User Input**: "{user_input}"
+2. **Current Model**: {current_model}
+3. **History**: 
 {history_txt}
 
-Output JSON only:
+# Instructions
+次の3つの事項を行ってください：
+1. **Entity Extraction**: ユーザーの要求に含まれる具体的なエンティティや事実を抽出。
+2. **Intent & Problem Class**: 要求に関連する抽象的な問題クラスや意図を特定。
+3. **Model Refinement (MFR)**: ユーザーの入力が「現在の世界モデル」に対する変更（制約の追加、訂正、削除）を含んでいるか確認し、差分操作（Diff Ops）を生成してください。
+   - 変更がない場合は "stm_diffs": [] としてください。
+   - 変更がある場合は以下の操作を使用:
+     - `ADD_CONSTRAINT: <内容>` (新しい制約やルールの追加)
+     - `MODIFY_ACTION: <内容>` (アクションや手段の変更・修正)
+     - `DROP_ENTITY: <名前>` (不要になったエンティティの削除)
+
+# Output JSON Format
 {{
     "entities": ["エンティティ1", "エンティティ2"],
     "problem_class": "抽象的な問題クラス",
-    "search_query": "具体的なエンティティと抽象的な概念を組み合わせた、単一の効果的な検索クエリ文字列"
+    "search_query": "検索クエリ文字列",
+    "stm_diffs": [
+        "ADD_CONSTRAINT: 予算は3000円以内",
+        "MODIFY_ACTION: 鍵ではなくカードキーを使用"
+    ]
 }}
 """
 
 RETRIEVED_CONTEXT_TEMPLATE = "--- 取得されたコンテキスト ---\n{context_str}\n-----------------------"
+
+# --- STM (Short-Term Memory) Templates ---
+
+RESPONSE_STYLE_INSTRUCTIONS = {
+    "concise": "簡潔に回答してください。要点のみを述べ、冗長な説明は避けてください。",
+    "detailed": "詳細に説明してください。背景情報や関連する考慮事項も含めてください。",
+    "evidence-based": "根拠を重視して回答してください。主張には必ず情報源や論拠を明示してください。",
+    "step-by-step": "ステップバイステップで説明してください。手順やプロセスを順序立てて示してください。",
+    "comparative": "比較・対照の形式で回答してください。選択肢がある場合はメリット・デメリットを明示してください。",
+    "tutorial": "チュートリアル形式で回答してください。初心者にもわかるよう、前提知識から丁寧に説明してください。",
+    "summary-only": "要約のみで回答してください。結論を1-2文で簡潔に述べてください。"
+}
+
+STM_CONTEXT_TEMPLATE = """--- セッション情報 ---
+現在時刻: {current_time}
+対話ターン: {turn_count}
+{style_instruction}
+-----------------------
+"""

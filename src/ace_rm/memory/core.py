@@ -12,6 +12,12 @@ from ace_rm.config import (
 from ace_rm.utils.embedding_manager import get_embedding_model
 
 class ACE_Memory:
+    """Long-Term Memory (LTM) management class.
+
+    Combines SQLite for structured storage and full-text search (FTS5),
+    and FAISS for semantic vector search.
+    """
+
     def __init__(self, session_id: Optional[str] = None):
         self.session_id = session_id
 
@@ -94,6 +100,13 @@ class ACE_Memory:
                 self.index.add_with_ids(np.array(embeddings).astype('float32'), ids)
 
     def add(self, content: str, entities: List[str] = [], problem_class: str = ""):
+        """Adds a new document to the memory.
+
+        Args:
+            content: The text content of the document.
+            entities: A list of entities related to the document.
+            problem_class: The abstract problem class or category.
+        """
         entities_json = json.dumps(entities)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -121,7 +134,8 @@ class ACE_Memory:
 
     def add_batch(self, items: List[Dict[str, Any]]):
         """Optimized batch insertion."""
-        if not items: return
+        if not items:
+            return
         
         contents = [item['content'] for item in items]
         entities_list = [json.dumps(item.get('entities', [])) for item in items]
@@ -157,6 +171,15 @@ class ACE_Memory:
             self.last_index_mtime = os.path.getmtime(self.index_path)
 
     def find_similar_vectors(self, content: str, threshold: float = 0.3) -> List[Tuple[int, float]]:
+        """Finds documents similar to the given content using vector search.
+
+        Args:
+            content: The query content.
+            threshold: The similarity threshold.
+
+        Returns:
+            A list of tuples containing (doc_id, distance/similarity).
+        """
         encoded_content = "検索クエリ: " + content if self.use_prefixes else content
         vector = self.encoder.encode([encoded_content])
         
@@ -171,16 +194,18 @@ class ACE_Memory:
                     pass
 
             if self.index.ntotal > 0:
-                D, I = self.index.search(np.array(vector).astype('float32'), 3)
+                distances, indices = self.index.search(np.array(vector).astype('float32'), 3)
                 results = []
-                for i in range(len(I[0])):
-                    idx = I[0][i]
-                    dist = D[0][i]
+                for i in range(len(indices[0])):
+                    idx = indices[0][i]
+                    dist = distances[0][i]
                     if idx >= 0:
                         if self.distance_metric == 'cosine':
-                            if dist > threshold: results.append((int(idx), float(dist)))
+                            if dist > threshold:
+                                results.append((int(idx), float(dist)))
                         else:
-                            if dist < threshold: results.append((int(idx), float(dist)))
+                            if dist < threshold:
+                                results.append((int(idx), float(dist)))
                 return results
         return []
 
@@ -214,7 +239,34 @@ class ACE_Memory:
             faiss.write_index(self.index, self.index_path)
             self.last_index_mtime = os.path.getmtime(self.index_path)
 
+    def _sanitize_query(self, query: str) -> str:
+        """Sanitizes the query string for FTS5 to prevent SQL errors."""
+        import re
+        # Remove characters that have special meaning in FTS5 search patterns
+        # We replace them with spaces to avoid breaking the query
+        special_chars = ['"', '*', ':', '(', ')']
+        sanitized = query
+        for char in special_chars:
+            sanitized = sanitized.replace(char, ' ')
+
+        # Also remove FTS5 keywords if they appear as standalone words
+        keywords = ['AND', 'OR', 'NOT', 'NEAR']
+        for kw in keywords:
+            sanitized = re.sub(rf'\b{kw}\b', ' ', sanitized, flags=re.IGNORECASE)
+
+        return ' '.join(sanitized.split())
+
     def search(self, query: str, k: int = 3, distance_threshold: float = None) -> List[str]:
+        """Performs a hybrid search (vector + FTS5) for relevant documents.
+
+        Args:
+            query: The search query string.
+            k: The maximum number of results to return.
+            distance_threshold: Optional override for the similarity threshold.
+
+        Returns:
+            A list of document contents.
+        """
         if os.path.exists(self.index_path):
             current_mtime = os.path.getmtime(self.index_path)
             if current_mtime > self.last_index_mtime:
@@ -232,47 +284,64 @@ class ACE_Memory:
             encoded_query = "検索クエリ: " + query if self.use_prefixes else query
             query_vec = self.encoder.encode([encoded_query])
             search_k = min(k * 3, self.index.ntotal)  
-            D, I = self.index.search(np.array(query_vec).astype('float32'), search_k)
+            distances, indices = self.index.search(np.array(query_vec).astype('float32'), search_k)
             
             found_ids = []
-            for distance, idx in zip(D[0], I[0]):
+            for distance, idx in zip(distances[0], indices[0]):
                 if idx >= 0:
                     if self.distance_metric == 'cosine':
-                        if distance > distance_threshold: found_ids.append(int(idx))
+                        if distance > distance_threshold:
+                            found_ids.append(int(idx))
                     else:
-                        if distance < distance_threshold: found_ids.append(int(idx))
+                        if distance < distance_threshold:
+                            found_ids.append(int(idx))
             found_ids = found_ids[:k]
             
             if found_ids:
                 placeholders = ','.join('?' * len(found_ids))
                 with sqlite3.connect(self.db_path) as conn:
                     cursor = conn.cursor()
-                    cursor.execute(f"SELECT content FROM documents WHERE id IN ({placeholders})", found_ids)
-                    for row in cursor.fetchall():
-                        results[row[0]] = row[0]
+                    # Fetch ID and content to preserve FAISS order
+                    cursor.execute(f"SELECT id, content FROM documents WHERE id IN ({placeholders})", found_ids)
+                    id_to_content = {row[0]: row[1] for row in cursor.fetchall()}
+                    for fid in found_ids:
+                        if fid in id_to_content:
+                            content = id_to_content[fid]
+                            results[content] = content
 
         if len(results) < k:
-            with sqlite3.connect(self.db_path) as conn:
-                try:
-                    cursor = conn.cursor()
-                    remaining = k - len(results)
-                    cursor.execute("SELECT content FROM documents_fts WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?", (query, remaining))
-                    for row in cursor.fetchall():
-                        if row[0] not in results:
-                            results[row[0]] = row[0]
-                except Exception:
-                    pass
+            sanitized_query = self._sanitize_query(query)
+            if sanitized_query:
+                with sqlite3.connect(self.db_path) as conn:
+                    try:
+                        cursor = conn.cursor()
+                        remaining = k - len(results)
+                        cursor.execute("SELECT content FROM documents_fts WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?", (sanitized_query, remaining))
+                        for row in cursor.fetchall():
+                            if row[0] not in results:
+                                results[row[0]] = row[0]
+                    except Exception:
+                        pass
         return list(results.values())
     
     def clear(self):
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
+        """Clears all documents and resets the FAISS index."""
+        with sqlite3.connect(self.db_path) as conn:
+            try:
+                conn.execute("DELETE FROM documents")
+                # FTS5 table is automatically updated by triggers, 
+                # but it's often better to VACUUM or just let it be.
+            except sqlite3.OperationalError:
+                pass # Table might not exist yet
+
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
         if os.path.exists(self.index_lock_path):
-            try: os.remove(self.index_lock_path)
-            except OSError: pass
-        self.__init__(session_id=self.session_id)
+            try:
+                os.remove(self.index_lock_path)
+            except OSError:
+                pass
+        self._load_or_build_index()
 
     def get_all(self) -> List[Dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:

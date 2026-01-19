@@ -3,19 +3,16 @@ import os
 import sys
 import time
 import uuid
-import json
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage
 
 from ace_rm.config import MODEL_NAME, BASE_URL, OPENAI_API_KEY, LLM_TEMPERATURE
 from ace_rm.memory.core import ACE_Memory
 from ace_rm.memory.queue import TaskQueue
 from ace_rm.workers.background import BackgroundWorker
-from ace_rm import prompts
 
 # Simple LLM Mock or Tracker if needed, but for manual test we just run it and check logs/DB
 # Ideally we want to see only 1 LLM call.

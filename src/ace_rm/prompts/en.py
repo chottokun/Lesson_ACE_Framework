@@ -77,3 +77,22 @@ Output JSON only:
 """
 
 RETRIEVED_CONTEXT_TEMPLATE = "--- Retrieved Context ---\n{context_str}\n-----------------------"
+
+# --- STM (Short-Term Memory) Templates ---
+
+RESPONSE_STYLE_INSTRUCTIONS = {
+    "concise": "Respond concisely. State only the key points and avoid verbose explanations.",
+    "detailed": "Provide a detailed explanation. Include background information and related considerations.",
+    "evidence-based": "Focus on evidence. Always cite sources or provide supporting arguments for your claims.",
+    "step-by-step": "Explain step by step. Present procedures and processes in a logical order.",
+    "comparative": "Use a comparative format. When options exist, clearly state the pros and cons of each.",
+    "tutorial": "Use a tutorial format. Explain from the basics so that beginners can understand.",
+    "summary-only": "Provide a summary only. State the conclusion in 1-2 sentences."
+}
+
+STM_CONTEXT_TEMPLATE = """--- Session Info ---
+Current time: {current_time}
+Dialog turn: {turn_count}
+{style_instruction}
+-----------------------
+"""
