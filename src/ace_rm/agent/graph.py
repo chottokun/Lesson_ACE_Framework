@@ -14,6 +14,8 @@ from langgraph.prebuilt import ToolNode
 from ace_rm import prompts
 from ace_rm.memory.core import ACE_Memory
 from ace_rm.memory.queue import TaskQueue
+from ace_rm.utils.stm_manager import apply_diff
+
 
 # --- Agent State ---
 class AgentState(TypedDict):
@@ -103,10 +105,16 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
                     "messages": context_msg + messages if context_msg else messages
                 }
 
-        # Full path: LLM-based intent analysis
+        # Full path: LLM-based intent analysis (Curator + MFR)
         history_txt = "\n".join([f"{type(m).__name__}: {m.content}" for m in messages[-5:-1]])
+        
+        # Get Current Model from State
+        current_stm = state.get('stm', {})
+        current_model = current_stm.get('model', {"constraints": [], "actions": [], "entities": []})
+        
         prompt = prompts.INTENT_ANALYSIS_PROMPT.format(
             user_input=user_input,
+            current_model=json.dumps(current_model, ensure_ascii=False),
             history_txt=history_txt
         )
         
@@ -121,7 +129,15 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
             entities = data.get("entities", [])
             p_class = data.get("problem_class", "")
             query = data.get("search_query", user_input)
+            stm_diffs = data.get("stm_diffs", [])
             
+            # --- Apply MFR Diffs ---
+            new_model = current_model
+            if stm_diffs:
+                print(f"[MFR] Applying Diffs: {stm_diffs}")
+                new_model = apply_diff(current_model, stm_diffs)
+            
+            # Vector Search
             docs = memory.search(query)
             
             context_msg = []
@@ -129,15 +145,21 @@ def build_ace_agent(llm: ChatOpenAI, memory: ACE_Memory, task_queue: Optional[Ta
                 context_str = "\n".join(docs)
                 context_msg = [SystemMessage(content=prompts.RETRIEVED_CONTEXT_TEMPLATE.format(context_str=context_str))]
             
+            # Prepare updated STM state
+            new_stm = current_stm.copy()
+            new_stm['model'] = new_model
+            
             return {
                 "context_docs": docs,
                 "extracted_entities": entities,
                 "problem_class": p_class,
+                "stm": new_stm,  # Update STM in state
                 "messages": context_msg + messages if context_msg else messages
             }
         except Exception as e:
             print(f"[Curator] Error: {e}")
             return {"context_docs": [], "extracted_entities": [], "problem_class": ""}
+
 
     def agent_node(state: AgentState):
         messages = list(state['messages'])

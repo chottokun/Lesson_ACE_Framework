@@ -12,7 +12,8 @@ The ACE Framework operates on a cognitive cycle composed of five key components:
 
 1.  **Curator (Retrieval & Context)**
     *   **Function**: Analyzes user intent and queries the long-term memory.
-    *   **Advanced Logic**: Extracts both specific entities (e.g., "5L jug") and abstract problem classes (e.g., "Constraint Satisfaction"). It injects relevant past experiences into the prompt context *before* the agent generates a response.
+    *   **Advanced Logic**: Extracts both specific entities (e.g., "5L jug") and abstract problem classes.
+    *   **MFR (Model-First Reasoning)**: Compares user input against the current **World Model (STM)** and generates **Diff Operations** (Add/Modify/Drop) to evolve the agent's understanding incrementally.
 
 2.  **Agent (Reasoning & Action)**
     *   **Function**: The core LLM that generates responses or executes tools.
@@ -35,7 +36,10 @@ The ACE Framework operates on a cognitive cycle composed of five key components:
 6.  **Short-Term Memory (STM)**
     *   **Function**: Maintains session-level state that persists across a single conversation.
     *   **User-Configurable**: Response style (concise, detailed, evidence-based, step-by-step, comparative, tutorial, summary-only) can be selected via UI dropdown.
-    *   **Context Injection**: Current time, turn count, and style instructions are injected as a `SystemMessage` to guide the Agent's response format.
+    *   **Function**: Maintains session-level state that persists across a single conversation.
+    *   **World Model**: Holds a structured representation of the current task (`Constraints`, `Actions`, `Entities`). This model persists across turns and evolves via MFR updates.
+    *   **User-Configurable**: Response style (concise, detailed, etc.) can be selected via UI dropdown.
+    *   **Context Injection**: Current time, turn count, and style instructions are injected as a `SystemMessage`.
 
 ## ⚙️ 処理フローの可視化 (Visualization)
 
@@ -196,7 +200,7 @@ uv run python src/ace_rm/app.py
 ```
 
 *   **Left Pane**: Chat interface.
-*   **Center Pane**: Debug view showing **Curator** retrieval ("Retrieved Context"), **LTM Status** (Total Docs), and **Background Processing** status (Queue/Recent Activity).
+*   **Center Pane**: Debug view showing **Curator** retrieval, **STM (World Model)** state, **LTM Status**, and **Background Processing** status.
 *   **Right Pane**: Live view of the Long-Term Memory database.
 
 #### 🎛️ Response Style (STM Settings)
