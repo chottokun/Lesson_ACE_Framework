@@ -1,14 +1,28 @@
-# Welcome to Chainlit! 🚀🤖
+# ACE Chat
 
-Hi there, Developer! 👋 We're excited to have you on board. Chainlit is a powerful tool designed to help you prototype, debug and share applications built on top of LLMs.
+ACE Chatへようこそ！このエージェントは、**長期記憶(LTM)**、**短期記憶(STM)**、そして**継続的な学習ループ**を備えた次世代のAIエージェント・プロトタイプです。
 
-## Useful Links 🔗
+## ✨ 主な機能
 
-- **Documentation:** Get started with our comprehensive [Chainlit Documentation](https://docs.chainlit.io) 📚
-- **Discord Community:** Join our friendly [Chainlit Discord](https://discord.gg/k73SQ3FyUh) to ask questions, share your projects, and connect with other developers! 💬
+### 1. 思考プロセスの可視化
+エージェントが回答を生成する際、背後で行っている「意図分析」や「世界モデル（STM）の更新」を、展開可能な**ステップ**（Thinking）としてリアルタイムで確認できます。
 
-We can't wait to see what you create with Chainlit! Happy coding! 💻😊
+### 2. モデル・ファースト・リーズニング (MFR)
+対話を通じて、エージェントは現在の状況を「世界モデル」として構造化します。制約事項、エンティティ、アクションがどのように管理されているかを観察してください。
 
-## Welcome screen
+### 3. 持続的な学習
+対話が終了すると、バックグラウンド・ワーカーが内容を分析し、重要な教訓や知識を長期記憶に保存します。保存された後の対話では、その「教訓」を活かした回答が可能になります。
 
-To modify the welcome screen, edit the `chainlit.md` file at the root of your project. If you do not want a welcome screen, just leave this file empty.
+## 🛠️ 基本的な操作
+
+### アクション・ボタン
+チャット開始時に表示されるボタンを使用して、以下の操作が可能です：
+- ⚠️ **Reset Memory**: 現在のセッションのメモリ（STM/LTM）を完全に消去します。
+- 🧠 **View World Model**: 現在エージェントが把握している「世界の構造」をJSON形式で確認します。
+
+### 使い方のヒント
+- エージェントに複雑な制約（予算、時間制限、特定のルールなど）を伝えてみてください。World Modelに反映します。
+- 「以前教えたことを覚えている？」と聞いてみてください。バックグラウンドでの学習が完了していれば、過去の知識が呼び出されます。
+
+---
+*Inspired by: "Agentic Context Engineering" & "Model-First Reasoning" research.*
