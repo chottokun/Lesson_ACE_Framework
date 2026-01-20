@@ -191,17 +191,38 @@ The framework has been refactored for high-performance and future-proof scalabil
 
 ## 🖥️ Usage
 
-### Interactive Web UI (Gradio)
+### User Interfaces
 
-The main entry point is a 3-pane Gradio interface that visualizes the agent's internal thought process.
+The ACE Framework provides two interfaces, each suited for different purposes:
 
+| Feature | Chainlit | Gradio |
+|:---|:---|:---|
+| **Default URL** | `http://localhost:8000` | `http://localhost:7860` |
+| **Best For** | Production / End Users | Development / Debugging |
+| **Thought Process** | Expandable Steps | Text Boxes |
+| **LTM/Task Tables** | Not shown | Full Table View |
+| **Memory Reset** | Action Button | Dedicated Button |
+| **Response Style** | Fixed (in code) | Dropdown Selector |
+
+#### 1. Chainlit Interface (Recommended for Users)
+A modern, interactive UI with real-time thought process visualization using expandable steps.
+```bash
+uv run chainlit run src/ace_rm/chainlit_app.py
+```
+Features:
+- **Thinking Steps**: Curator intent analysis and MFR diffs are shown in collapsible steps.
+- **Action Buttons**: "Reset Memory" and "View World Model" buttons for quick interactions.
+- **Streaming**: Responses stream in real-time.
+
+#### 2. Gradio Interface (Recommended for Debugging)
+A comprehensive debug interface with database tables, STM views, and full visibility into internal state.
 ```bash
 uv run python src/ace_rm/app.py
 ```
-
+Layout:
 *   **Left Pane**: Chat interface.
 *   **Center Pane**: Debug view showing **Curator** retrieval, **STM (World Model)** state, **LTM Status**, and **Background Processing** status.
-*   **Right Pane**: Live view of the Long-Term Memory database.
+*   **Right Pane**: Live view of the Long-Term Memory database and Task Queue.
 
 #### 🎛️ Response Style (STM Settings)
 
